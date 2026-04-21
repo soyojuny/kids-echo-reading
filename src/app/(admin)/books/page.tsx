@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CreateBookUseCase } from "@/features/books/application/CreateBookUseCase";
 import { DistributeBulkTextUseCase } from "@/features/books/application/DistributeBulkTextUseCase";
-import { ReorderPageUseCase } from "@/features/books/application/ReorderPageUseCase";
-import { SortUploadedPagesUseCase } from "@/features/books/application/SortUploadedPagesUseCase";
 import { BookCreateForm } from "@/features/books/components/BookCreateForm";
 import { BookSelector } from "@/features/books/components/BookSelector";
 import { BulkTextPasteTool } from "@/features/books/components/BulkTextPasteTool";
@@ -12,20 +10,16 @@ import { PageOrderList } from "@/features/books/components/PageOrderList";
 import { PageTextEditor } from "@/features/books/components/PageTextEditor";
 import { PageUploadPanel } from "@/features/books/components/PageUploadPanel";
 import { PageInputStatusPolicy } from "@/features/books/domain/PageInputStatusPolicy";
-import { InMemoryBookRepository } from "@/features/books/infrastructure/InMemoryBookRepository";
+import { ApiBookRepository } from "@/features/books/infrastructure/ApiBookRepository";
+import {
+  bulkSavePageTexts,
+  listBookPages,
+  reorderBookPage,
+  savePageText,
+  uploadBookPages
+} from "@/features/books/infrastructure/booksApi";
+import type { Book } from "@/features/books/domain/Book";
 import type { EditableBookPage } from "@/features/books/types/EditableBookPage";
-
-function createEmptyPage(file: File): EditableBookPage {
-  return {
-    id: crypto.randomUUID(),
-    fileName: file.name,
-    imageUrl: URL.createObjectURL(file),
-    pageNumber: 0,
-    confirmedText: "",
-    isConfirmed: false,
-    inputStatus: "empty"
-  };
-}
 
 function updatePageText(page: EditableBookPage, text: string): EditableBookPage {
   const textChanged = page.confirmedText !== text;
@@ -39,96 +33,157 @@ function updatePageText(page: EditableBookPage, text: string): EditableBookPage 
 }
 
 export default function AdminBooksPage() {
-  const createBookUseCaseRef = useRef(new CreateBookUseCase(new InMemoryBookRepository()));
-  const sortUploadedPagesUseCaseRef = useRef(new SortUploadedPagesUseCase());
-  const reorderPageUseCaseRef = useRef(new ReorderPageUseCase());
+  const bookRepositoryRef = useRef(new ApiBookRepository());
+  const createBookUseCaseRef = useRef(new CreateBookUseCase(bookRepositoryRef.current));
   const distributeBulkTextUseCaseRef = useRef(new DistributeBulkTextUseCase());
-  const objectUrlsRef = useRef(new Set<string>());
 
-  const [books, setBooks] = useState<Awaited<ReturnType<InMemoryBookRepository["list"]>>>([]);
+  const [books, setBooks] = useState<Book[]>([]);
   const [selectedBookId, setSelectedBookId] = useState<string>();
   const [selectedPageId, setSelectedPageId] = useState<string>();
-  const [pagesByBookId, setPagesByBookId] = useState<Record<string, EditableBookPage[]>>({});
+  const [pages, setPages] = useState<EditableBookPage[]>([]);
   const [usedBulkDistribute, setUsedBulkDistribute] = useState(false);
-
-  const selectedPages = useMemo(
-    () => (selectedBookId ? pagesByBookId[selectedBookId] ?? [] : []),
-    [pagesByBookId, selectedBookId]
-  );
+  const [statusMessage, setStatusMessage] = useState<string>();
+  const [isLoadingBooks, setIsLoadingBooks] = useState(false);
+  const [isLoadingPages, setIsLoadingPages] = useState(false);
+  const [isMutating, setIsMutating] = useState(false);
 
   const selectedPage = useMemo(
-    () => selectedPages.find((page) => page.id === selectedPageId),
-    [selectedPages, selectedPageId]
+    () => pages.find((page) => page.id === selectedPageId),
+    [pages, selectedPageId]
   );
 
   useEffect(() => {
-    if (!selectedPages.length) {
+    let isMounted = true;
+    const loadBooks = async () => {
+      setIsLoadingBooks(true);
+      try {
+        const listedBooks = await bookRepositoryRef.current.list();
+        if (!isMounted) {
+          return;
+        }
+
+        setBooks(listedBooks);
+        if (listedBooks.length) {
+          setSelectedBookId((current) => current ?? listedBooks[0].id);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setStatusMessage(error instanceof Error ? error.message : "책 목록을 불러오지 못했습니다.");
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingBooks(false);
+        }
+      }
+    };
+
+    loadBooks();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedBookId) {
+      setPages([]);
       setSelectedPageId(undefined);
       return;
     }
 
-    if (!selectedPageId || !selectedPages.some((page) => page.id === selectedPageId)) {
-      setSelectedPageId(selectedPages[0].id);
-    }
-  }, [selectedPages, selectedPageId]);
+    let isMounted = true;
+    const loadPages = async () => {
+      setIsLoadingPages(true);
+      try {
+        const nextPages = await listBookPages(selectedBookId);
+        if (!isMounted) {
+          return;
+        }
+
+        setPages(nextPages);
+        setSelectedPageId(nextPages[0]?.id);
+      } catch (error) {
+        if (isMounted) {
+          setStatusMessage(error instanceof Error ? error.message : "페이지 목록을 불러오지 못했습니다.");
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingPages(false);
+        }
+      }
+    };
+
+    setUsedBulkDistribute(false);
+    loadPages();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedBookId]);
 
   useEffect(() => {
-    return () => {
-      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
-      objectUrlsRef.current.clear();
-    };
-  }, []);
-
-  const updateCurrentBookPages = (updater: (pages: EditableBookPage[]) => EditableBookPage[]) => {
-    if (!selectedBookId) {
+    if (!pages.length) {
+      setSelectedPageId(undefined);
       return;
     }
 
-    setPagesByBookId((previous) => {
-      const current = previous[selectedBookId] ?? [];
-      const nextPages = updater(current);
-      return {
-        ...previous,
-        [selectedBookId]: nextPages
-      };
-    });
-  };
+    if (!selectedPageId || !pages.some((page) => page.id === selectedPageId)) {
+      setSelectedPageId(pages[0].id);
+    }
+  }, [pages, selectedPageId]);
 
   const handleCreateBook = async (input: { title: string; author?: string }) => {
-    const created = await createBookUseCaseRef.current.execute(input);
-    setBooks((previous) => [...previous, created]);
-    setPagesByBookId((previous) => ({
-      ...previous,
-      [created.id]: []
-    }));
-    setSelectedBookId(created.id);
-    setSelectedPageId(undefined);
+    setIsMutating(true);
+    setStatusMessage(undefined);
+    try {
+      const created = await createBookUseCaseRef.current.execute(input);
+      setBooks((previous) => [...previous, created]);
+      setSelectedBookId(created.id);
+      setStatusMessage("책이 생성되었습니다.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "책 생성에 실패했습니다.");
+    } finally {
+      setIsMutating(false);
+    }
   };
 
-  const handleUpload = (files: File[]) => {
+  const handleUpload = async (files: File[]) => {
     if (!selectedBookId) {
       return;
     }
 
-    const nextPages = files.map((file) => {
-      const page = createEmptyPage(file);
-      objectUrlsRef.current.add(page.imageUrl);
-      return page;
-    });
-
-    updateCurrentBookPages((current) =>
-      sortUploadedPagesUseCaseRef.current.execute([...current, ...nextPages])
-    );
+    setIsMutating(true);
+    setStatusMessage(undefined);
+    try {
+      const updatedPages = await uploadBookPages(selectedBookId, files);
+      setPages(updatedPages);
+      setSelectedPageId((current) => current ?? updatedPages[0]?.id);
+      setStatusMessage(`${files.length}개 페이지가 업로드되었습니다.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "페이지 업로드에 실패했습니다.");
+    } finally {
+      setIsMutating(false);
+    }
   };
 
-  const handleMovePage = (pageId: string, direction: "up" | "down") => {
-    updateCurrentBookPages((current) =>
-      reorderPageUseCaseRef.current.execute({
-        pages: current,
+  const handleMovePage = async (pageId: string, direction: "up" | "down") => {
+    if (!selectedBookId) {
+      return;
+    }
+
+    setIsMutating(true);
+    setStatusMessage(undefined);
+    try {
+      const updatedPages = await reorderBookPage({
+        bookId: selectedBookId,
         pageId,
         direction
-      })
-    );
+      });
+      setPages(updatedPages);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "페이지 순서 변경에 실패했습니다.");
+    } finally {
+      setIsMutating(false);
+    }
   };
 
   const handleChangeText = (text: string) => {
@@ -136,77 +191,110 @@ export default function AdminBooksPage() {
       return;
     }
 
-    updateCurrentBookPages((current) =>
+    setPages((current) =>
       current.map((page) => (page.id === selectedPageId ? updatePageText(page, text) : page))
     );
   };
 
-  const handleToggleConfirm = () => {
-    if (!selectedPageId) {
+  const handleToggleConfirm = async () => {
+    if (!selectedBookId || !selectedPageId) {
       return;
     }
 
-    updateCurrentBookPages((current) =>
-      current.map((page) => {
-        if (page.id !== selectedPageId) {
-          return page;
-        }
+    const page = pages.find((item) => item.id === selectedPageId);
+    if (!page) {
+      return;
+    }
 
-        const hasText = page.confirmedText.trim().length > 0;
-        const nextConfirmed = hasText ? !page.isConfirmed : false;
+    const hasText = page.confirmedText.trim().length > 0;
+    const nextConfirmed = hasText ? !page.isConfirmed : false;
 
-        return {
-          ...page,
-          isConfirmed: nextConfirmed,
-          inputStatus: PageInputStatusPolicy.resolve({
-            text: page.confirmedText,
-            isConfirmed: nextConfirmed
-          })
-        };
-      })
-    );
+    setIsMutating(true);
+    setStatusMessage(undefined);
+    try {
+      const updatedPages = await savePageText({
+        bookId: selectedBookId,
+        pageId: page.id,
+        confirmedText: page.confirmedText,
+        isConfirmed: nextConfirmed,
+        sourceType: "manual"
+      });
+      setPages(updatedPages);
+      setStatusMessage(nextConfirmed ? "텍스트를 확정했습니다." : "텍스트 확정을 해제했습니다.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "텍스트 저장에 실패했습니다.");
+    } finally {
+      setIsMutating(false);
+    }
   };
 
-  const handleDistributeBulkText = (bulkText: string) => {
-    updateCurrentBookPages((current) => {
-      const distributed = distributeBulkTextUseCaseRef.current.execute({
-        pageCount: current.length,
-        bulkText
-      });
+  const handleDistributeBulkText = async (bulkText: string) => {
+    if (!selectedBookId || !pages.length) {
+      return;
+    }
 
-      return current.map((page, index) => {
-        const distributedText = distributed[index]?.trim();
-        if (!distributedText) {
-          return page;
-        }
-
-        return updatePageText(page, distributedText);
-      });
+    const distributed = distributeBulkTextUseCaseRef.current.execute({
+      pageCount: pages.length,
+      bulkText
     });
 
-    setUsedBulkDistribute(true);
+    const updates = pages
+      .map((page, index) => {
+        const distributedText = distributed[index]?.trim();
+        if (!distributedText) {
+          return null;
+        }
+
+        return {
+          pageId: page.id,
+          confirmedText: distributedText,
+          isConfirmed: false,
+          sourceType: "bulk_paste" as const
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+
+    if (!updates.length) {
+      setStatusMessage("분배 가능한 텍스트를 찾지 못했습니다.");
+      return;
+    }
+
+    setIsMutating(true);
+    setStatusMessage(undefined);
+    try {
+      const updatedPages = await bulkSavePageTexts({
+        bookId: selectedBookId,
+        updates
+      });
+      setPages(updatedPages);
+      setUsedBulkDistribute(true);
+      setStatusMessage(`${updates.length}개 페이지 텍스트를 분배 저장했습니다.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "일괄 텍스트 저장에 실패했습니다.");
+    } finally {
+      setIsMutating(false);
+    }
   };
 
   const phaseTwoProgress = useMemo(
     () => [
       { label: "책 생성 화면", done: books.length > 0 },
-      { label: "다중 페이지 업로드", done: selectedPages.length > 0 },
-      { label: "파일명 기반 자동 정렬", done: selectedPages.length > 1 },
-      { label: "페이지 순서 변경", done: selectedPages.length > 1 },
-      {
-        label: "페이지별 텍스트 편집",
-        done: selectedPages.some((page) => page.confirmedText.trim().length > 0)
-      },
+      { label: "다중 페이지 업로드", done: pages.length > 0 },
+      { label: "파일명 기반 자동 정렬", done: pages.length > 1 },
+      { label: "페이지 순서 변경", done: pages.length > 1 },
+      { label: "페이지별 텍스트 편집", done: pages.some((page) => page.confirmedText.trim().length > 0) },
       { label: "전체 텍스트 붙여넣기 분배", done: usedBulkDistribute }
     ],
-    [books.length, selectedPages, usedBulkDistribute]
+    [books.length, pages, usedBulkDistribute]
   );
 
   return (
     <main className="container">
       <section className="panel">
         <h1>관리자 책 등록 (Phase 2)</h1>
-        <p className="muted">문서 기준: 다중 업로드, 자동 정렬, 순서 조정, 페이지 텍스트 편집, 전체 텍스트 분배</p>
+        <p className="muted">Supabase DB/Storage 기반 실연동 상태</p>
+        {(isLoadingBooks || isLoadingPages || isMutating) && <p className="muted">작업 중...</p>}
+        {statusMessage && <p>{statusMessage}</p>}
       </section>
 
       <section className="grid two" style={{ marginTop: "1rem" }}>
@@ -215,18 +303,28 @@ export default function AdminBooksPage() {
       </section>
 
       <section className="grid two" style={{ marginTop: "1rem" }}>
-        <PageUploadPanel disabled={!selectedBookId} onUpload={handleUpload} />
-        <BulkTextPasteTool disabled={!selectedBookId || selectedPages.length === 0} onDistribute={handleDistributeBulkText} />
+        <PageUploadPanel
+          disabled={!selectedBookId || isLoadingBooks || isLoadingPages || isMutating}
+          onUpload={handleUpload}
+        />
+        <BulkTextPasteTool
+          disabled={!selectedBookId || pages.length === 0 || isMutating}
+          onDistribute={handleDistributeBulkText}
+        />
       </section>
 
       <section className="grid two" style={{ marginTop: "1rem" }}>
         <PageOrderList
-          pages={selectedPages}
+          pages={pages}
           selectedPageId={selectedPageId}
           onSelectPage={setSelectedPageId}
           onMovePage={handleMovePage}
         />
-        <PageTextEditor page={selectedPage} onChangeText={handleChangeText} onToggleConfirm={handleToggleConfirm} />
+        <PageTextEditor
+          page={selectedPage}
+          onChangeText={handleChangeText}
+          onToggleConfirm={handleToggleConfirm}
+        />
       </section>
 
       <section className="panel" style={{ marginTop: "1rem" }}>

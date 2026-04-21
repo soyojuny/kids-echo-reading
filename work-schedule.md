@@ -35,9 +35,9 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 - [x] `2026-04-21` 페이지 순서 변경(위/아래 이동) 구현
 - [x] `2026-04-21` 페이지별 텍스트 편집 및 확정 상태 구현
 - [x] `2026-04-21` 전체 텍스트 붙여넣기 분배 도구 구현
-- [ ] Supabase 테이블 연동으로 in-memory 저장소 대체
-- [ ] 업로드 파일을 Storage(`book-pages`)에 저장하도록 API 연결
-- [ ] `book_pages`, `page_text_versions` 실제 DB 저장/조회 연결
+- [x] `2026-04-21` Supabase 테이블 연동으로 in-memory 저장소 대체(API 기반)
+- [x] `2026-04-21` 업로드 파일을 Storage(`book-pages`)에 저장하도록 API 연결
+- [x] `2026-04-21` `book_pages`, `page_text_versions` 실제 DB 저장/조회 연결
 
 ### Phase 3. TTS와 하이라이트
 
@@ -74,3 +74,6 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 - `2026-04-21`: Phase 2 관리자 입력 UI(생성/업로드/정렬/순서변경/페이지편집/일괄분배) 1차 구현
 - `2026-04-21`: 로컬 검증 수행(`npm install`, `npm run typecheck`, `npm run build` 통과)
 - `2026-04-21`: `/doc`에 개발 검증 워크플로우 및 Supabase 설정 가이드 추가
+- `2026-04-21`: Phase 2 Supabase 실연동(API route handlers, Storage 업로드, DB CRUD) 적용
+- `2026-04-21`: 변경 후 `npm run verify` 재실행 통과
+- `2026-04-21`: Phase 2 Supabase 연동 변경사항 커밋/원격 반영
