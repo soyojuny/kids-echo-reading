@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>아동용 리딩 CX 데모</title>
+    <style>
+      :root {
+        --bg-top: #f4fbff;
+        --bg-bottom: #fff7e6;
+        --ink: #1f2a44;
+        --muted: #6d7790;
+        --card: #ffffffcc;
+        --primary: #2c7efc;
+        --good: #19a45f;
+        --warn: #f4a621;
+        --bad: #f05f57;
+        --shadow: 0 12px 26px rgba(37, 74, 143, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", "Noto Sans KR", sans-serif;
+        color: var(--ink);
+        background: linear-gradient(165deg, var(--bg-top), var(--bg-bottom));
+      }
+
+      .app {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 20px 18px 28px;
+      }
+
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      .chip {
+        border: 0;
+        background: #ffffff;
+        border-radius: 999px;
+        padding: 10px 14px;
+        font-size: 14px;
+        box-shadow: var(--shadow);
+      }
+
+      .title {
+        margin: 0;
+        font-size: clamp(22px, 3vw, 32px);
+        line-height: 1.2;
+      }
+
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .stage {
+        display: none;
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+
+      .stage.active {
+        display: grid;
+      }
+
+      .card {
+        background: var(--card);
+        backdrop-filter: blur(3px);
+        border: 1px solid #ffffff;
+        border-radius: 22px;
+        box-shadow: var(--shadow);
+        padding: 18px;
+      }
+
+      .catalog-tools {
+        display: grid;
+        gap: 10px;
+        margin: 12px 0 14px;
+      }
+
+      .search {
+        width: 100%;
+        border: 1px solid #dce6f7;
+        border-radius: 12px;
+        padding: 11px 12px;
+        font-size: 15px;
+      }
+
+      .category-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .category-row button {
+        border: 1px solid #dbe5fa;
+        border-radius: 999px;
+        background: #fff;
+        padding: 8px 12px;
+        font-size: 14px;
+        font-weight: 700;
+        color: #4b5a78;
+        cursor: pointer;
+      }
+
+      .category-row button.active {
+        color: #1459bb;
+        border-color: #bfd8ff;
+        background: #eef5ff;
+      }
+
+      .book-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 14px;
+      }
+
+      .book {
+        border: 0;
+        text-align: left;
+        border-radius: 18px;
+        padding: 14px;
+        background: #ffffff;
+        box-shadow: 0 8px 20px rgba(42, 80, 131, 0.11);
+        cursor: pointer;
+      }
+
+      .cover {
+        height: 98px;
+        border-radius: 12px;
+        margin-bottom: 10px;
+      }
+
+      .c1 {
+        background: linear-gradient(145deg, #7ec8ff, #baf2ff);
+      }
+      .c2 {
+        background: linear-gradient(145deg, #ffd580, #fff1b8);
+      }
+      .c3 {
+        background: linear-gradient(145deg, #ffa7b8, #ffd4e7);
+      }
+
+      .book h3 {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      .book p {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+
+      .reading-toolbar {
+        margin-top: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .view-toggle {
+        display: flex;
+        gap: 8px;
+      }
+
+      .view-toggle button {
+        border: 1px solid #dbe5fa;
+        border-radius: 999px;
+        background: #fff;
+        padding: 8px 12px;
+        font-size: 14px;
+        font-weight: 700;
+        color: #4b5a78;
+        cursor: pointer;
+      }
+
+      .view-toggle button.active {
+        color: #1459bb;
+        border-color: #bfd8ff;
+        background: #eef5ff;
+      }
+
+      .illustration {
+        min-height: 320px;
+        border-radius: 16px;
+        background: linear-gradient(140deg, #a7d3ff, #f5faff);
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 12px;
+      }
+
+      .illustration.spread {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .page-panel {
+        border-radius: 12px;
+        background: #ffffff;
+        min-height: 260px;
+        display: grid;
+        place-content: center;
+        text-align: center;
+        color: #35557f;
+        font-weight: 700;
+      }
+
+      .page-panel.secondary {
+        display: none;
+      }
+
+      .illustration.spread .page-panel.secondary {
+        display: grid;
+      }
+
+      .script {
+        font-size: clamp(20px, 2.6vw, 30px);
+        line-height: 1.6;
+        margin: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .script-token {
+        color: #95a2bd;
+        border-radius: 8px;
+        transition: color 0.18s linear, background-color 0.18s linear;
+      }
+
+      .script-token.filled-play {
+        color: #2c7efc;
+        background-color: #e8f1ff;
+      }
+
+      .script-token.filled-record {
+        color: #2c7efc;
+        background-color: #e8f1ff;
+      }
+
+      .script-token.filled-correct {
+        color: #2c7efc;
+        background-color: #e8f1ff;
+      }
+
+      .script-token.filled-fail {
+        color: #f05f57;
+        background-color: #ffeceb;
+      }
+
+      .sentence-box {
+        margin-top: 14px;
+        border-radius: 16px;
+        border: 2px solid #dbe7fa;
+        background: #f8fbff;
+        padding: 16px;
+        transition: all 0.25s ease;
+      }
+
+      .sentence-box.state-idle {
+        border-color: #dbe7fa;
+        background: #f8fbff;
+      }
+
+      .sentence-box.state-play {
+        border-color: #8bc0ff;
+        background: #eaf4ff;
+      }
+
+      .sentence-box.state-record {
+        border-color: #8bc0ff;
+        background: #eaf4ff;
+      }
+
+      .sentence-box.state-done {
+        border-color: #97ddb8;
+        background: #edf9f2;
+      }
+
+      .sentence-box.state-fail {
+        border-color: #ffb2a9;
+        background: #fff0ee;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .sentence-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .btn {
+        border: 0;
+        border-radius: 14px;
+        padding: 12px 16px;
+        font-size: 16px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .btn.soft {
+        background: #fff;
+        color: var(--ink);
+      }
+
+      .badge {
+        border-radius: 999px;
+        padding: 7px 10px;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .bad {
+        background: var(--bad);
+      }
+      .partial {
+        background: var(--warn);
+      }
+
+      .result-score {
+        font-size: clamp(34px, 6vw, 52px);
+        font-weight: 800;
+        margin: 0;
+        color: #0d5fcd;
+      }
+
+      .feedback-words {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .page-review {
+        margin-top: 12px;
+        border-radius: 14px;
+        border: 1px solid #d8e6ff;
+        background: #f3f8ff;
+        padding: 12px;
+        display: none;
+      }
+
+      .page-review.active {
+        display: block;
+      }
+
+      .review-list {
+        margin: 8px 0 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .review-word {
+        border-radius: 999px;
+        padding: 7px 10px;
+        background: #ffffff;
+        border: 1px solid #dce8ff;
+        font-size: 14px;
+        color: #24569e;
+        font-weight: 700;
+      }
+
+      .nav {
+        position: static;
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+      }
+
+      .nav button {
+        border: 0;
+        border-radius: 14px;
+        min-height: 52px;
+        background: #ffffff;
+        box-shadow: var(--shadow);
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--muted);
+      }
+
+      .nav button.active {
+        color: var(--primary);
+        outline: 2px solid #d3e5ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="topbar">
+        <div>
+          <h1 class="title">리딩 놀이터</h1>
+          <p class="subtitle">아동용 읽기 연습 CX 데모 화면</p>
+        </div>
+        <button class="chip">오늘 목표 3페이지</button>
+      </div>
+
+      <section class="stage active" data-stage="home">
+        <article class="card">
+          <h2>오늘 읽을 책 고르기</h2>
+          <p class="subtitle">100권 이상을 가정해 카테고리 + 검색 중심 탐색으로 구성</p>
+          <div class="catalog-tools">
+            <input id="searchBook" class="search" type="search" placeholder="책 제목 검색" />
+            <div class="category-row" id="categoryRow"></div>
+          </div>
+          <div class="book-grid" id="bookGrid"></div>
+        </article>
+      </section>
+
+      <section class="stage" data-stage="reading">
+        <article class="card">
+          <h2 id="reading-book">봄 숲의 토끼</h2>
+          <div class="reading-toolbar">
+            <p class="subtitle" id="pageModeLabel">현재: 한 페이지 보기</p>
+            <div class="view-toggle" id="viewToggle">
+              <button class="active" data-view="single">1페이지</button>
+              <button data-view="spread">2페이지</button>
+            </div>
+          </div>
+
+          <div class="illustration" id="illustrationArea">
+            <div class="page-panel" id="pagePanelMain">현재 페이지 삽화</div>
+            <div class="page-panel secondary" id="pagePanelSecondary">다음 페이지 미리보기</div>
+          </div>
+
+          <h3 style="margin: 16px 0 0">문장 따라 읽기</h3>
+          <p class="subtitle" id="sentenceProgress">문장 1 / 2</p>
+          <div class="sentence-box state-idle" id="sentenceBox">
+            <p class="script" id="scriptLine"></p>
+          </div>
+
+          <div class="controls">
+            <button class="btn soft" id="btnStop">중지</button>
+          </div>
+          <div class="sentence-nav">
+            <button class="btn soft" id="btnPrevSentence">이전 문장</button>
+            <button class="btn soft" id="btnNextSentence">다음 문장 / 페이지</button>
+          </div>
+          <p id="statusLine" class="subtitle">준비 완료</p>
+          <div class="page-review" id="pageReviewPanel">
+            <strong>이 단어 한 번 더 해볼까?</strong>
+            <ul class="review-list" id="pageReviewList"></ul>
+            <div class="controls">
+              <button class="btn soft" id="btnPageRetry">다시 해보기</button>
+              <button class="btn soft" id="btnPageSkip">다음 페이지로</button>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="stage" data-stage="result">
+        <article class="card">
+          <h2>AI 추천 복습</h2>
+          <p class="subtitle" id="finalReviewSummary">다시 해보면 더 좋아질 단어를 골랐어요.</p>
+          <ul class="review-list" id="finalReviewList"></ul>
+          <div class="controls">
+            <button class="btn soft" id="btnRetry">추천 단어 다시 읽기</button>
+            <button class="btn soft" id="btnNextBook">다음 책 보기</button>
+          </div>
+        </article>
+      </section>
+
+      <nav class="nav">
+        <button class="active" data-go="home">1. 책 고르기</button>
+        <button data-go="reading">2. 읽기 연습</button>
+        <button data-go="result">3. 결과 보기</button>
+      </nav>
+    </div>
+
+    <script>
+      const FLOW = {
+        playSentenceMs: 2400,
+        recordSentenceMs: 3200,
+        retryPromptMs: 900,
+        autoNextSentenceMs: 2000,
+        autoNextPageMs: 5000,
+        maxSentenceRetry: 1
+      };
+
+      const stages = [...document.querySelectorAll(".stage")];
+      const navButtons = [...document.querySelectorAll(".nav button")];
+      const bookGrid = document.getElementById("bookGrid");
+      const categoryRow = document.getElementById("categoryRow");
+      const searchBook = document.getElementById("searchBook");
+      const readingBook = document.getElementById("reading-book");
+      const statusLine = document.getElementById("statusLine");
+      const scriptLine = document.getElementById("scriptLine");
+      const sentenceProgress = document.getElementById("sentenceProgress");
+      const sentenceBox = document.getElementById("sentenceBox");
+      const viewButtons = [...document.querySelectorAll("#viewToggle button")];
+      const illustrationArea = document.getElementById("illustrationArea");
+      const pageModeLabel = document.getElementById("pageModeLabel");
+      const pagePanelMain = document.getElementById("pagePanelMain");
+      const pagePanelSecondary = document.getElementById("pagePanelSecondary");
+      const pageReviewPanel = document.getElementById("pageReviewPanel");
+      const pageReviewList = document.getElementById("pageReviewList");
+      const finalReviewSummary = document.getElementById("finalReviewSummary");
+      const finalReviewList = document.getElementById("finalReviewList");
+
+      let selectedCategory = "전체";
+      let pageViewMode = "single";
+      let autoViewModeEnabled = true;
+      let progressTimer = null;
+      let playTimer = null;
+      let recordTimer = null;
+      let flowTimer = null;
+      let pageTimer = null;
+      let isStopped = false;
+
+      let activeBook = null;
+      let activePages = [];
+      let pageStartIndex = 0;
+      let windowSentences = [];
+      let windowTokenGroups = [];
+      let windowMasteredPattern = [];
+      let windowIssuePattern = [];
+      let windowAttemptCounts = [];
+      let sentenceIndex = 0;
+      let tokenElements = [];
+      let pageReviewDone = false;
+      let allReviewWordCounts = {};
+
+      const categories = ["전체", "동물", "모험", "생활", "과학", "감정"];
+      const books = [
+        { title: "봄 숲의 토끼", level: 1, pages: 6, category: "동물", cover: "c1" },
+        { title: "별빛 버스", level: 2, pages: 6, category: "모험", cover: "c2" },
+        { title: "바다 친구들", level: 1, pages: 6, category: "동물", cover: "c3" },
+        { title: "우리 동네 아침", level: 1, pages: 6, category: "생활", cover: "c2" },
+        { title: "기분 온도계", level: 2, pages: 6, category: "감정", cover: "c1" },
+        { title: "작은 로켓 연구소", level: 3, pages: 6, category: "과학", cover: "c3" }
+      ];
+
+      const pageMap = {
+        "봄 숲의 토끼": [
+          { sentences: ["토끼가 숲길을 천천히 걸어가요.", "나무 사이로 따뜻한 바람이 불어요."], issues: [[], []] },
+          { sentences: ["토끼는 친구를 만나 반갑게 인사해요.", "함께 꽃길을 따라 노래를 불러요."], issues: [[3], []] },
+          { sentences: ["해가 지자 집으로 돌아갈 시간이에요."], issues: [[]] },
+          { sentences: ["토끼는 오늘 모험이 즐거웠다고 말해요."], issues: [[]] }
+        ],
+        "별빛 버스": [
+          { sentences: ["버스가 반짝이는 길을 달려요.", "아이들은 창밖의 별을 세어봐요."], issues: [[], [2]] },
+          { sentences: ["종점에서 모두 웃으며 내렸어요."], issues: [[]] },
+          { sentences: ["기사 아저씨가 안전하게 와줘서 고마워요."], issues: [[]] },
+          { sentences: ["아이들은 내일 또 타고 싶어 해요."], issues: [[]] }
+        ],
+        "바다 친구들": [
+          { sentences: ["고래가 큰 꼬리로 물을 튀겨요."], issues: [[]] },
+          { sentences: ["문어는 바위 뒤에서 손을 흔들어요.", "친구들은 산호 옆에서 노래해요."], issues: [[1, 3], []] },
+          { sentences: ["모두 함께 바다 축제를 준비해요."], issues: [[]] },
+          { sentences: ["밤이 되자 물결이 반짝거려요."], issues: [[]] }
+        ]
+      };
+
+      function moveStage(stageName) {
+        stages.forEach((stage) => stage.classList.toggle("active", stage.dataset.stage === stageName));
+        navButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.go === stageName));
+      }
+
+      function clearTimers() {
+        clearTimeout(playTimer);
+        clearTimeout(recordTimer);
+        clearTimeout(flowTimer);
+        clearTimeout(pageTimer);
+        clearInterval(progressTimer);
+        playTimer = null;
+        recordTimer = null;
+        flowTimer = null;
+        pageTimer = null;
+        progressTimer = null;
+      }
+
+      function tokenizeSentence(sentence) {
+        const tokens = sentence.trim().split(/\s+/).filter(Boolean);
+        const hasEnglish = tokens.some((token) => /[A-Za-z]/.test(token));
+        if (!hasEnglish) return tokens;
+        const grouped = [];
+        for (let i = 0; i < tokens.length; i += 2) {
+          grouped.push(tokens.slice(i, i + 2).join(" "));
+        }
+        return grouped;
+      }
+
+      function getCurrentMastered() {
+        return windowMasteredPattern[sentenceIndex] || [];
+      }
+
+      function getCurrentTokens() {
+        return windowTokenGroups[sentenceIndex] || [];
+      }
+
+      function paintTokens(phaseClass = "", targetIndexes = []) {
+        const mastered = getCurrentMastered();
+        tokenElements.forEach((token, idx) => {
+          token.className = "script-token";
+          if (mastered[idx]) token.classList.add("filled-correct");
+        });
+
+        targetIndexes.forEach((idx) => {
+          if (!tokenElements[idx]) return;
+          tokenElements[idx].classList.add("active-chunk");
+          if (phaseClass && !mastered[idx]) {
+            tokenElements[idx].classList.add(phaseClass);
+          }
+        });
+      }
+
+      function animateSentenceProgress(durationMs, phaseClass, targetIndexes) {
+        clearInterval(progressTimer);
+        paintTokens("", targetIndexes);
+        if (targetIndexes.length === 0) return;
+
+        const stepMs = Math.max(Math.floor(durationMs / targetIndexes.length), 160);
+        let filledCount = 0;
+        progressTimer = setInterval(() => {
+          if (filledCount >= targetIndexes.length) {
+            clearInterval(progressTimer);
+            progressTimer = null;
+            return;
+          }
+          filledCount += 1;
+          paintTokens(phaseClass, targetIndexes.slice(0, filledCount));
+        }, stepMs);
+      }
+
+      function getPageSpan() {
+        return pageViewMode === "spread" ? 2 : 1;
+      }
+
+      function getOrientationDefaultView() {
+        return window.matchMedia("(orientation: landscape)").matches ? "spread" : "single";
+      }
+
+      function applyOrientationDefaultView() {
+        if (!autoViewModeEnabled) return;
+        setPageView(getOrientationDefaultView());
+      }
+
+      function setPageView(mode) {
+        pageViewMode = mode;
+        if (mode === "spread" && pageStartIndex % 2 === 1) {
+          pageStartIndex -= 1;
+        }
+        illustrationArea.classList.toggle("spread", mode === "spread");
+        viewButtons.forEach((button) => button.classList.toggle("active", button.dataset.view === mode));
+        pageModeLabel.textContent = mode === "spread" ? "현재: 두 페이지 보기" : "현재: 한 페이지 보기";
+        if (activePages.length > 0) {
+          loadPageWindow();
+          startSentenceFlow();
+        }
+      }
+
+      function loadPageWindow() {
+        const span = getPageSpan();
+        const pageSlice = activePages.slice(pageStartIndex, pageStartIndex + span);
+        windowSentences = [];
+        windowTokenGroups = [];
+        windowMasteredPattern = [];
+        windowIssuePattern = [];
+        windowAttemptCounts = [];
+        pageReviewDone = false;
+        hidePageReviewPanel();
+
+        pageSlice.forEach((page) => {
+          page.sentences.forEach((text, idx) => {
+            const groupedTokens = tokenizeSentence(text);
+            windowSentences.push(text);
+            windowTokenGroups.push(groupedTokens);
+            windowMasteredPattern.push(new Array(groupedTokens.length).fill(false));
+            windowIssuePattern.push(Array.isArray(page.issues?.[idx]) ? page.issues[idx] : []);
+            windowAttemptCounts.push(0);
+          });
+        });
+
+        sentenceIndex = 0;
+        const pageNo1 = pageStartIndex + 1;
+        const pageNo2 = Math.min(pageStartIndex + span, activePages.length);
+        pagePanelMain.textContent = `${pageNo1}페이지 삽화`;
+        pagePanelSecondary.textContent = `${pageNo2}페이지 삽화`;
+        readingBook.textContent =
+          span === 2 ? `${activeBook.title} · ${pageNo1}-${pageNo2}페이지` : `${activeBook.title} · ${pageNo1}페이지`;
+        renderSentence();
+      }
+
+      function renderSentence() {
+        const tokens = getCurrentTokens();
+        scriptLine.innerHTML = tokens.map((token) => `<span class="script-token">${token}</span>`).join("");
+        tokenElements = [...scriptLine.querySelectorAll(".script-token")];
+        sentenceProgress.textContent = `문장 ${sentenceIndex + 1} / ${windowSentences.length}`;
+        sentenceBox.className = "sentence-box state-idle";
+        paintTokens();
+      }
+
+      function getUnmasteredIndexes() {
+        const mastered = getCurrentMastered();
+        return mastered.map((ok, idx) => ({ ok, idx })).filter((item) => !item.ok).map((item) => item.idx);
+      }
+
+      function runSentenceCycle(retryCount = 0) {
+        clearTimers();
+        isStopped = false;
+        const targetIndexes = getUnmasteredIndexes();
+        if (targetIndexes.length === 0) return;
+
+        sentenceBox.className = "sentence-box state-play";
+        statusLine.textContent = "자동 진행: 문장 전체를 먼저 들어보자.";
+        animateSentenceProgress(FLOW.playSentenceMs, "filled-play", targetIndexes);
+
+        playTimer = setTimeout(() => {
+          if (isStopped) return;
+          sentenceBox.className = "sentence-box state-record";
+          statusLine.textContent = "자동 진행: 문장 전체를 따라 읽어보자.";
+          animateSentenceProgress(FLOW.recordSentenceMs, "filled-record", targetIndexes);
+
+          recordTimer = setTimeout(() => {
+            if (isStopped) return;
+            onSentenceRecorded(retryCount);
+          }, FLOW.recordSentenceMs);
+        }, FLOW.playSentenceMs);
+      }
+
+      function onSentenceRecorded(retryCount) {
+        windowAttemptCounts[sentenceIndex] = (windowAttemptCounts[sentenceIndex] || 0) + 1;
+        const rawIssues = windowIssuePattern[sentenceIndex] || [];
+        const solvedCount = Math.max(windowAttemptCounts[sentenceIndex] - 1, 0);
+        const activeIssues = new Set(rawIssues.slice(solvedCount));
+        const mastered = getCurrentMastered();
+
+        mastered.forEach((_, idx) => {
+          if (!activeIssues.has(idx)) mastered[idx] = true;
+        });
+
+        const remainingWordsIndexes = getUnmasteredIndexes();
+        paintTokens();
+
+        if (remainingWordsIndexes.length > 0 && retryCount < FLOW.maxSentenceRetry) {
+          statusLine.textContent = "이 단어 한 번 더 해볼까?";
+          flowTimer = setTimeout(() => {
+            runSentenceCycle(retryCount + 1);
+          }, FLOW.retryPromptMs);
+          return;
+        }
+
+        if (remainingWordsIndexes.length > 0) {
+          const remainWords = remainingWordsIndexes
+            .map((idx) => getCurrentTokens()[idx])
+            .filter(Boolean);
+          remainWords.forEach((word) => {
+            allReviewWordCounts[word] = (allReviewWordCounts[word] || 0) + 1;
+          });
+          statusLine.textContent = "남은 단어는 페이지 끝에서 다시 해보자.";
+        }
+
+        flowTimer = setTimeout(() => {
+          startSentenceFlow();
+        }, 600);
+      }
+
+      function startSentenceFlow() {
+        const unmastered = getUnmasteredIndexes();
+        if (unmastered.length === 0) {
+          sentenceBox.className = "sentence-box state-done";
+          statusLine.textContent = `잘 읽었어요. ${FLOW.autoNextSentenceMs / 1000}초 후 다음 문장으로 이동합니다.`;
+          flowTimer = setTimeout(() => goNextSentenceOrPage(true), FLOW.autoNextSentenceMs);
+          return;
+        }
+
+        runSentenceCycle(0);
+      }
+
+      function getPageUnmasteredWords() {
+        const words = [];
+        windowMasteredPattern.forEach((masteredRow, sIdx) => {
+          const tokens = windowTokenGroups[sIdx] || [];
+          masteredRow.forEach((ok, tIdx) => {
+            if (!ok && tokens[tIdx]) words.push(tokens[tIdx]);
+          });
+        });
+        return [...new Set(words)];
+      }
+
+      function hidePageReviewPanel() {
+        pageReviewPanel.classList.remove("active");
+        pageReviewList.innerHTML = "";
+      }
+
+      function showPageReviewPanel(words) {
+        pageReviewList.innerHTML = words.map((word) => `<li class="review-word">${word}</li>`).join("");
+        pageReviewPanel.classList.add("active");
+      }
+
+      function goPrevSentence() {
+        if (sentenceIndex <= 0) return;
+        clearTimers();
+        hidePageReviewPanel();
+        sentenceIndex -= 1;
+        renderSentence();
+        statusLine.textContent = "이전 문장으로 이동했어요.";
+        startSentenceFlow();
+      }
+
+      function goNextSentenceOrPage(isAuto = false) {
+        clearTimers();
+        hidePageReviewPanel();
+
+        if (sentenceIndex < windowSentences.length - 1) {
+          sentenceIndex += 1;
+          renderSentence();
+          if (!isAuto) statusLine.textContent = "다음 문장으로 이동했어요.";
+          startSentenceFlow();
+          return;
+        }
+
+        onWindowCompleted(isAuto);
+      }
+
+      function renderFinalReview() {
+        const entries = Object.entries(allReviewWordCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8);
+
+        if (entries.length === 0) {
+          finalReviewSummary.textContent = "오늘은 추천 복습 단어가 없어요. 정말 잘했어요!";
+          finalReviewList.innerHTML = `<li class="review-word">모든 단어 안정적</li>`;
+          return;
+        }
+
+        finalReviewSummary.textContent = "자주 어려웠던 단어를 먼저 복습해보자.";
+        finalReviewList.innerHTML = entries
+          .map(([word, count]) => `<li class="review-word">${word} · 추천 ${count}회</li>`)
+          .join("");
+      }
+
+      function goNextPage(immediate = false) {
+        const span = getPageSpan();
+        const nextStart = pageStartIndex + span;
+        if (nextStart >= activePages.length) {
+          renderFinalReview();
+          moveStage("result");
+          return;
+        }
+
+        const move = () => {
+          pageStartIndex = nextStart;
+          loadPageWindow();
+          startSentenceFlow();
+        };
+
+        if (immediate) {
+          statusLine.textContent = "다음 페이지로 이동합니다.";
+          move();
+          return;
+        }
+
+        statusLine.textContent = `${FLOW.autoNextPageMs / 1000}초 후 다음 페이지로 이동합니다.`;
+        pageTimer = setTimeout(move, FLOW.autoNextPageMs);
+      }
+
+      function onWindowCompleted(isAuto) {
+        const unmasteredWords = getPageUnmasteredWords();
+        if (unmasteredWords.length > 0 && !pageReviewDone) {
+          showPageReviewPanel(unmasteredWords);
+          statusLine.textContent = "페이지 마무리 전에 남은 단어를 한 번 더 해보자.";
+          return;
+        }
+
+        if (!isAuto) {
+          goNextPage(true);
+          return;
+        }
+        goNextPage(false);
+      }
+
+      function startPageRetry() {
+        pageReviewDone = true;
+        hidePageReviewPanel();
+        const targetSentence = windowMasteredPattern.findIndex((row) => row.some((ok) => !ok));
+        if (targetSentence === -1) {
+          goNextPage(true);
+          return;
+        }
+        sentenceIndex = targetSentence;
+        renderSentence();
+        statusLine.textContent = "좋아, 남은 단어부터 다시 해보자.";
+        startSentenceFlow();
+      }
+
+      function renderCategories() {
+        categoryRow.innerHTML = categories
+          .map(
+            (category) =>
+              `<button data-category="${category}" class="${
+                category === selectedCategory ? "active" : ""
+              }">${category}</button>`
+          )
+          .join("");
+
+        [...categoryRow.querySelectorAll("button")].forEach((button) => {
+          button.addEventListener("click", () => {
+            selectedCategory = button.dataset.category;
+            renderCategories();
+            renderBooks();
+          });
+        });
+      }
+
+      function renderBooks() {
+        const keyword = searchBook.value.trim();
+        const filtered = books.filter((book) => {
+          const byCategory = selectedCategory === "전체" || book.category === selectedCategory;
+          const byKeyword = keyword.length === 0 || book.title.includes(keyword);
+          return byCategory && byKeyword;
+        });
+
+        if (filtered.length === 0) {
+          bookGrid.innerHTML = `<p class="subtitle">검색 결과가 없습니다.</p>`;
+          return;
+        }
+
+        bookGrid.innerHTML = filtered
+          .map(
+            (book) => `
+              <button class="book" data-book="${book.title}">
+                <div class="cover ${book.cover}"></div>
+                <h3>${book.title}</h3>
+                <p>${book.category} · 레벨 ${book.level} · ${book.pages}페이지</p>
+              </button>
+            `
+          )
+          .join("");
+
+        [...bookGrid.querySelectorAll(".book")].forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const bookTitle = btn.dataset.book;
+            activeBook = books.find((book) => book.title === bookTitle) || { title: bookTitle };
+            allReviewWordCounts = {};
+            autoViewModeEnabled = true;
+            setPageView(getOrientationDefaultView());
+            activePages =
+              pageMap[bookTitle] || [
+                { sentences: ["오늘은 새 책을 한 문장씩 읽어볼 거예요."], issues: [[]] },
+                { sentences: ["문장을 끝까지 읽으면 다음으로 넘어가요."], issues: [[]] }
+              ];
+            pageStartIndex = 0;
+            loadPageWindow();
+            moveStage("reading");
+            startSentenceFlow();
+          });
+        });
+      }
+
+      navButtons.forEach((btn) => {
+        btn.addEventListener("click", () => moveStage(btn.dataset.go));
+      });
+
+      searchBook.addEventListener("input", renderBooks);
+
+      viewButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          autoViewModeEnabled = false;
+          setPageView(button.dataset.view);
+        });
+      });
+
+      document.getElementById("btnStop").addEventListener("click", () => {
+        clearTimers();
+        isStopped = true;
+        sentenceBox.className = "sentence-box state-idle";
+        statusLine.textContent = "자동 진행이 중지되었습니다.";
+      });
+
+      document.getElementById("btnPrevSentence").addEventListener("click", () => {
+        goPrevSentence();
+      });
+
+      document.getElementById("btnNextSentence").addEventListener("click", () => {
+        goNextSentenceOrPage(false);
+      });
+
+      document.getElementById("btnPageRetry").addEventListener("click", () => {
+        startPageRetry();
+      });
+
+      document.getElementById("btnPageSkip").addEventListener("click", () => {
+        pageReviewDone = true;
+        hidePageReviewPanel();
+        goNextPage(true);
+      });
+
+      document.getElementById("btnRetry").addEventListener("click", () => {
+        if (!activeBook) {
+          moveStage("home");
+          return;
+        }
+        allReviewWordCounts = {};
+        pageStartIndex = 0;
+        loadPageWindow();
+        moveStage("reading");
+        startSentenceFlow();
+      });
+
+      document.getElementById("btnNextBook").addEventListener("click", () => {
+        clearTimers();
+        moveStage("home");
+      });
+
+      renderCategories();
+      renderBooks();
+      applyOrientationDefaultView();
+      window.addEventListener("resize", () => {
+        applyOrientationDefaultView();
+      });
+    </script>
+  </body>
+</html>
