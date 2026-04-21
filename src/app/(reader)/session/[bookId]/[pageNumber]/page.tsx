@@ -4,11 +4,11 @@ type SessionParams = {
 };
 
 type SessionPageProps = {
-  params: SessionParams | Promise<SessionParams>;
+  params: Promise<SessionParams>;
 };
 
 export default async function ReaderSessionPage({ params }: SessionPageProps) {
-  const { bookId, pageNumber } = await Promise.resolve(params);
+  const { bookId, pageNumber } = await params;
 
   return (
     <main className="container">

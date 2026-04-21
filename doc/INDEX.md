@@ -16,6 +16,8 @@ AI나 개발자는 작업 전에 이 문서를 기준으로 판단해야 한다.
 - DB, 스토리지, 상태값: [`data-model.md`](./data-model.md)
 - 배포, 환경변수, 런타임 경계: [`deployment.md`](./deployment.md)
 - 프로젝트 구조와 규약: [`project-structure.md`](./project-structure.md)
+- 개발/검증 워크플로우: [`development-workflow.md`](./development-workflow.md)
+- Supabase 설정 가이드: [`supabase-setup-guide.md`](./supabase-setup-guide.md)
 
 ## Reading Guide
 
@@ -37,11 +39,22 @@ AI나 개발자는 작업 전에 이 문서를 기준으로 판단해야 한다.
 
 1. `deployment.md`
 2. `architecture.md`
+3. `supabase-setup-guide.md`
 
 ### 프로젝트 구조나 구현 위치를 정할 때
 
 1. `project-structure.md`
 2. `architecture.md`
+
+### 개발 후 검증 규칙을 확인할 때
+
+1. `development-workflow.md`
+
+### Supabase 초기 설정/온보딩을 할 때
+
+1. `supabase-setup-guide.md`
+2. `data-model.md`
+3. `deployment.md`
 
 ## Project Invariants
 
