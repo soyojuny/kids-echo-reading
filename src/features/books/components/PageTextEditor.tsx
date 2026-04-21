@@ -5,10 +5,18 @@ import type { EditableBookPage } from "@/features/books/types/EditableBookPage";
 type PageTextEditorProps = {
   page?: EditableBookPage;
   onChangeText: (text: string) => void;
+  onSaveDraft: () => void;
   onToggleConfirm: () => void;
+  disabled?: boolean;
 };
 
-export function PageTextEditor({ page, onChangeText, onToggleConfirm }: PageTextEditorProps) {
+export function PageTextEditor({
+  page,
+  onChangeText,
+  onSaveDraft,
+  onToggleConfirm,
+  disabled
+}: PageTextEditorProps) {
   if (!page) {
     return (
       <article className="panel">
@@ -32,12 +40,22 @@ export function PageTextEditor({ page, onChangeText, onToggleConfirm }: PageText
       <textarea
         value={page.confirmedText}
         onChange={(event) => onChangeText(event.target.value)}
+        disabled={disabled}
         placeholder="이 페이지 텍스트를 입력하세요."
         style={{ marginTop: "0.75rem", width: "100%", minHeight: "160px", padding: "0.6rem" }}
       />
-      <button type="button" onClick={onToggleConfirm} style={{ marginTop: "0.6rem" }}>
-        {page.isConfirmed ? "텍스트 확정 해제" : "텍스트 확정"}
-      </button>
+      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
+        <button
+          type="button"
+          onClick={onSaveDraft}
+          disabled={disabled || page.confirmedText.trim().length === 0}
+        >
+          텍스트 임시 저장
+        </button>
+        <button type="button" onClick={onToggleConfirm} disabled={disabled}>
+          {page.isConfirmed ? "텍스트 확정 해제" : "텍스트 확정"}
+        </button>
+      </div>
     </article>
   );
 }

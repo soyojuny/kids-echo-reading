@@ -228,6 +228,40 @@ export default function AdminBooksPage() {
     }
   };
 
+  const handleSaveDraft = async () => {
+    if (!selectedBookId || !selectedPageId) {
+      return;
+    }
+
+    const page = pages.find((item) => item.id === selectedPageId);
+    if (!page) {
+      return;
+    }
+
+    if (!page.confirmedText.trim()) {
+      setStatusMessage("저장할 텍스트가 없습니다.");
+      return;
+    }
+
+    setIsMutating(true);
+    setStatusMessage(undefined);
+    try {
+      const updatedPages = await savePageText({
+        bookId: selectedBookId,
+        pageId: page.id,
+        confirmedText: page.confirmedText,
+        isConfirmed: false,
+        sourceType: "manual"
+      });
+      setPages(updatedPages);
+      setStatusMessage("텍스트를 임시 저장했습니다.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "텍스트 임시 저장에 실패했습니다.");
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
   const handleDistributeBulkText = async (bulkText: string) => {
     if (!selectedBookId || !pages.length) {
       return;
@@ -323,7 +357,9 @@ export default function AdminBooksPage() {
         <PageTextEditor
           page={selectedPage}
           onChangeText={handleChangeText}
+          onSaveDraft={handleSaveDraft}
           onToggleConfirm={handleToggleConfirm}
+          disabled={isMutating}
         />
       </section>
 
