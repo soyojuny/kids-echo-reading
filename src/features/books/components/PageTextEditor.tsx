@@ -7,6 +7,7 @@ type PageTextEditorProps = {
   onChangeText: (text: string) => void;
   onSaveDraft: () => void;
   onToggleConfirm: () => void;
+  onGenerateTts: () => void;
   disabled?: boolean;
 };
 
@@ -15,6 +16,7 @@ export function PageTextEditor({
   onChangeText,
   onSaveDraft,
   onToggleConfirm,
+  onGenerateTts,
   disabled
 }: PageTextEditorProps) {
   if (!page) {
@@ -55,7 +57,17 @@ export function PageTextEditor({
         <button type="button" onClick={onToggleConfirm} disabled={disabled}>
           {page.isConfirmed ? "텍스트 확정 해제" : "텍스트 확정"}
         </button>
+        <button
+          type="button"
+          onClick={onGenerateTts}
+          disabled={disabled || page.inputStatus !== "ready" || page.confirmedText.trim().length === 0}
+        >
+          이 페이지 TTS 생성
+        </button>
       </div>
+      <p className="muted" style={{ marginTop: "0.6rem" }}>
+        TTS 생성은 `텍스트 확정(ready)` 상태에서만 가능합니다.
+      </p>
     </article>
   );
 }

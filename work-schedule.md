@@ -9,7 +9,7 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 | --- | --- | --- | --- |
 | Phase 1 | 기본 프로젝트 셋업 | In Progress | Next.js + Supabase + PWA 골격, 로그인 없는 관리자 시작 화면 |
 | Phase 2 | 책 업로드와 수동 텍스트 입력 | In Progress | 책 생성, 다중 업로드, 순서 정렬, 페이지 편집기 |
-| Phase 3 | TTS와 하이라이트 | Pending | TTS 프리셋, 오디오 생성, 하이라이트 |
+| Phase 3 | TTS와 하이라이트 | In Progress | TTS 프리셋, 오디오 생성, 하이라이트 |
 | Phase 4 | 따라읽기 평가 | Pending | 녹음 업로드, Azure 평가, 단어별 결과 |
 | Phase 5 | 태블릿 UX/PWA 강화 | Pending | 설치성/캐시/이어보기 강화 |
 | Phase 6 | 입력 자동화 확장 | Pending | OCR 초안 생성 + 검수 UI |
@@ -41,10 +41,10 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 
 ### Phase 3. TTS와 하이라이트
 
-- [ ] 부모 공통 TTS 프리셋 모델/화면
-- [ ] 페이지 텍스트 확정 후 TTS 생성 API
-- [ ] TTS 오디오 저장 및 메타데이터 저장
-- [ ] 읽기 화면 재생 + 문장/단어 하이라이트
+- [x] `2026-04-21` 부모 공통 TTS 프리셋 모델/화면
+- [x] `2026-04-21` 페이지 텍스트 확정 후 TTS 생성 API
+- [x] `2026-04-21` TTS 오디오 저장 및 메타데이터 저장
+- [x] `2026-04-21` 읽기 화면 재생 + 문장/단어 하이라이트
 
 ### Phase 4. 따라읽기 평가
 
@@ -77,3 +77,4 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 - `2026-04-21`: Phase 2 Supabase 실연동(API route handlers, Storage 업로드, DB CRUD) 적용
 - `2026-04-21`: 변경 후 `npm run verify` 재실행 통과
 - `2026-04-21`: Phase 2 Supabase 연동 변경사항 커밋/원격 반영
+- `2026-04-21`: Phase 3 TTS 프리셋/생성 API/오디오 저장/리더 하이라이트 1차 구현

@@ -13,6 +13,7 @@ import { PageInputStatusPolicy } from "@/features/books/domain/PageInputStatusPo
 import { ApiBookRepository } from "@/features/books/infrastructure/ApiBookRepository";
 import {
   bulkSavePageTexts,
+  generatePageTts,
   listBookPages,
   reorderBookPage,
   savePageText,
@@ -310,6 +311,26 @@ export default function AdminBooksPage() {
     }
   };
 
+  const handleGenerateTts = async () => {
+    if (!selectedBookId || !selectedPageId) {
+      return;
+    }
+
+    setIsMutating(true);
+    setStatusMessage(undefined);
+    try {
+      const asset = await generatePageTts({
+        bookId: selectedBookId,
+        pageId: selectedPageId
+      });
+      setStatusMessage(`TTS 생성 완료 (${Math.round((asset.durationMs ?? 0) / 1000)}초)`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "TTS 생성에 실패했습니다.");
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
   const phaseTwoProgress = useMemo(
     () => [
       { label: "책 생성 화면", done: books.length > 0 },
@@ -359,6 +380,7 @@ export default function AdminBooksPage() {
           onChangeText={handleChangeText}
           onSaveDraft={handleSaveDraft}
           onToggleConfirm={handleToggleConfirm}
+          onGenerateTts={handleGenerateTts}
           disabled={isMutating}
         />
       </section>

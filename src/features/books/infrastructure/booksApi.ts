@@ -1,4 +1,5 @@
 import type { EditableBookPage } from "@/features/books/types/EditableBookPage";
+import type { PageTtsAsset } from "@/features/tts/types/PageTtsAsset";
 
 type ReorderDirection = "up" | "down";
 type SourceType = "manual" | "bulk_paste";
@@ -95,4 +96,21 @@ export async function bulkSavePageTexts(input: {
 
   const payload = await parseJsonResponse<{ pages: EditableBookPage[] }>(response);
   return payload.pages;
+}
+
+export async function generatePageTts(input: {
+  bookId: string;
+  pageId: string;
+  ttsProfileId?: string;
+}): Promise<PageTtsAsset> {
+  const response = await fetch(`/api/books/${input.bookId}/pages/${input.pageId}/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ttsProfileId: input.ttsProfileId
+    })
+  });
+
+  const payload = await parseJsonResponse<{ asset: PageTtsAsset }>(response);
+  return payload.asset;
 }
