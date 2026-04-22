@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { WordTiming } from "@/shared/types/WordTiming";
+import styles from "@/features/reading/components/ChildReadingUi.module.css";
 
 type PageViewMode = "single" | "spread";
 type ReadingState =
@@ -78,21 +79,20 @@ function loadReviewMap(bookId: string): Record<string, number> {
     return {};
   }
 
-  const key = buildReviewStorageKey(bookId);
-  const raw = window.localStorage.getItem(key);
+  const raw = window.localStorage.getItem(buildReviewStorageKey(bookId));
   if (!raw) {
     return {};
   }
 
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const reviewMap: Record<string, number> = {};
+    const next: Record<string, number> = {};
     for (const [word, count] of Object.entries(parsed)) {
       if (typeof count === "number" && Number.isFinite(count) && count > 0) {
-        reviewMap[word] = Math.floor(count);
+        next[word] = Math.floor(count);
       }
     }
-    return reviewMap;
+    return next;
   } catch {
     return {};
   }
@@ -111,6 +111,22 @@ function toSortedReviewEntries(reviewMap: Record<string, number>): ReviewEntry[]
     .map(([word, count]) => ({ word, count }));
 }
 
+function getSentenceBoxClassName(readingState: ReadingState): string {
+  if (readingState === "ai_playing") {
+    return `${styles.sentenceBox} ${styles.statePlay}`;
+  }
+  if (readingState === "child_recording") {
+    return `${styles.sentenceBox} ${styles.stateRecord}`;
+  }
+  if (readingState === "sentence_done" || readingState === "page_transition_wait") {
+    return `${styles.sentenceBox} ${styles.stateDone}`;
+  }
+  if (readingState === "sentence_retry_prompt" || readingState === "page_review") {
+    return `${styles.sentenceBox} ${styles.stateFail}`;
+  }
+  return `${styles.sentenceBox} ${styles.stateIdle}`;
+}
+
 export function ReaderSessionPlayer({
   bookTitle,
   bookId,
@@ -121,7 +137,6 @@ export function ReaderSessionPlayer({
   confirmedText,
   audioUrl,
   wordTimings,
-  previousPageNumber,
   nextPageNumber
 }: ReaderSessionPlayerProps) {
   const router = useRouter();
@@ -133,7 +148,7 @@ export function ReaderSessionPlayer({
   );
 
   const [readingState, setReadingState] = useState<ReadingState>("idle");
-  const [statusMessage, setStatusMessage] = useState("읽기 루프를 시작해보자.");
+  const [statusMessage, setStatusMessage] = useState("준비 완료");
   const [sentenceIndex, setSentenceIndex] = useState(0);
   const [masteredBySentence, setMasteredBySentence] = useState<boolean[][]>([]);
   const [attemptCounts, setAttemptCounts] = useState<number[]>([]);
@@ -156,7 +171,6 @@ export function ReaderSessionPlayer({
 
   const currentTokens = sentenceTokens[sentenceIndex] ?? [];
   const currentMastered = masteredBySentence[sentenceIndex] ?? [];
-  const hasTimingMetadata = wordTimings.length > 0;
 
   function clearFlowTimers() {
     if (aiWordIntervalRef.current) {
@@ -197,7 +211,10 @@ export function ReaderSessionPlayer({
 
   function getRemainingWordIndexes(targetSentenceIndex: number, matrix: boolean[][]): number[] {
     const row = matrix[targetSentenceIndex] ?? [];
-    return row.map((isMastered, idx) => ({ isMastered, idx })).filter((item) => !item.isMastered).map((item) => item.idx);
+    return row
+      .map((isMastered, idx) => ({ isMastered, idx }))
+      .filter((item) => !item.isMastered)
+      .map((item) => item.idx);
   }
 
   function getPageUnmasteredWords(matrix: boolean[][]): string[] {
@@ -219,7 +236,6 @@ export function ReaderSessionPlayer({
     if (!words.length) {
       return;
     }
-
     const reviewMap = loadReviewMap(bookId);
     words.forEach((word) => {
       reviewMap[word] = (reviewMap[word] ?? 0) + 1;
@@ -230,17 +246,16 @@ export function ReaderSessionPlayer({
   function prepareFinalReview(currentUnmasteredWords: string[]) {
     addReviewWords(currentUnmasteredWords);
     const reviewMap = loadReviewMap(bookId);
-    const entries = toSortedReviewEntries(reviewMap).slice(0, 10);
-    setFinalReviewWords(entries);
+    setFinalReviewWords(toSortedReviewEntries(reviewMap).slice(0, 8));
   }
 
   function beginChildRecording(targetSentenceIndex: number) {
     setSentenceIndex(targetSentenceIndex);
     sentenceIndexRef.current = targetSentenceIndex;
-    setActiveWordIndex(-1);
     setSelectedWordIndexes([]);
+    setActiveWordIndex(-1);
     setReadingState("child_recording");
-    setStatusMessage("문장을 따라 읽고, 맞게 읽은 단어를 눌러보자.");
+    setStatusMessage("자동 진행: 문장 전체를 따라 읽어보자.");
   }
 
   function beginAiPlaying(targetSentenceIndex: number) {
@@ -255,7 +270,7 @@ export function ReaderSessionPlayer({
     sentenceIndexRef.current = targetSentenceIndex;
     setSelectedWordIndexes([]);
     setReadingState("ai_playing");
-    setStatusMessage("AI가 문장을 먼저 읽고 있어요.");
+    setStatusMessage("자동 진행: 문장 전체를 먼저 들어보자.");
     setActiveWordIndex(0);
 
     let progressIndex = 0;
@@ -292,8 +307,10 @@ export function ReaderSessionPlayer({
       return;
     }
 
-    const fallbackMs = Math.max(1600, Math.min(5200, sentence.length * 95));
-    aiFallbackTimerRef.current = setTimeout(onFinished, fallbackMs);
+    aiFallbackTimerRef.current = setTimeout(
+      onFinished,
+      Math.max(1600, Math.min(5200, sentence.length * 95))
+    );
   }
 
   function finalizePage(targetMatrix: boolean[][]) {
@@ -302,7 +319,7 @@ export function ReaderSessionPlayer({
     if (unmasteredWords.length > 0 && !pageReviewDoneRef.current) {
       setPageReviewWords(unmasteredWords);
       setReadingState("page_review");
-      setStatusMessage("이 단어 한 번 더 해볼까?");
+      setStatusMessage("페이지 마무리 전에 남은 단어를 한 번 더 해보자.");
       return;
     }
 
@@ -318,7 +335,7 @@ export function ReaderSessionPlayer({
 
     prepareFinalReview(unmasteredWords);
     setReadingState("final_review");
-    setStatusMessage("오늘 읽기에서 다시 보면 좋은 단어를 모았어요.");
+    setStatusMessage("자주 어려웠던 단어를 먼저 복습해보자.");
   }
 
   function goNextSentenceOrPage(manualOverride = false, matrixInput?: boolean[][]) {
@@ -374,9 +391,9 @@ export function ReaderSessionPlayer({
 
     setReadingState("sentence_done");
     if (remainingIndexes.length > 0) {
-      setStatusMessage("남은 단어는 페이지 끝에서 다시 연습해보자.");
+      setStatusMessage("남은 단어는 페이지 끝에서 다시 해보자.");
     } else {
-      setStatusMessage(`${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`);
+      setStatusMessage(`잘 읽었어요. ${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`);
     }
 
     sentenceTransitionTimerRef.current = setTimeout(() => {
@@ -388,7 +405,6 @@ export function ReaderSessionPlayer({
     if (sentenceIndex <= 0) {
       return;
     }
-
     stopAllAutomation();
     const prevSentence = sentenceIndex - 1;
     setSentenceIndex(prevSentence);
@@ -400,7 +416,7 @@ export function ReaderSessionPlayer({
   function handleStop() {
     stopAllAutomation();
     setReadingState("idle");
-    setStatusMessage("자동 진행을 중지했어요.");
+    setStatusMessage("자동 진행이 중지되었습니다.");
   }
 
   function startPageReviewRetry() {
@@ -411,7 +427,6 @@ export function ReaderSessionPlayer({
       finalizePage(matrix);
       return;
     }
-
     setPageReviewWords([]);
     setSentenceIndex(retrySentence);
     sentenceIndexRef.current = retrySentence;
@@ -478,8 +493,7 @@ export function ReaderSessionPlayer({
     const initialMastered = sentenceTokens.map((tokens) => tokens.map(() => false));
     setMasteredBySentence(initialMastered);
     masteredBySentenceRef.current = initialMastered;
-    const initialAttempts = sentenceTokens.map(() => 0);
-    setAttemptCounts(initialAttempts);
+    setAttemptCounts(sentenceTokens.map(() => 0));
     setSelectedWordIndexes([]);
     setSentenceIndex(0);
     sentenceIndexRef.current = 0;
@@ -491,7 +505,7 @@ export function ReaderSessionPlayer({
     }
 
     setReadingState("idle");
-    setStatusMessage("읽기를 시작합니다.");
+    setStatusMessage("준비 완료");
 
     const startTimer = setTimeout(() => {
       beginAiPlaying(0);
@@ -508,256 +522,236 @@ export function ReaderSessionPlayer({
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const sentenceBoxClassName = getSentenceBoxClassName(readingState);
+  const readingTitle =
+    pageViewMode === "spread" && nextPageNumber
+      ? `${bookTitle} · ${pageNumber}-${nextPageNumber}페이지`
+      : `${bookTitle} · ${pageNumber}페이지`;
+
   return (
-    <main className="container">
-      <section className="panel">
-        <h1>읽기 연습</h1>
-        <p>
-          책: <strong>{bookTitle}</strong>
-        </p>
-        <p>
-          페이지: {pageNumber} / {totalPages || "?"}
-        </p>
-        <p className="muted">
-          상태: <code>{readingState}</code>
-        </p>
-      </section>
-
-      <section className="panel" style={{ marginTop: "1rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
-          <p className="muted" style={{ margin: 0 }}>
-            현재 보기: {pageViewMode === "spread" ? "2페이지" : "1페이지"}
-          </p>
-          <div style={{ display: "flex", gap: "0.5rem" }}>
-            <button
-              type="button"
-              onClick={() => {
-                setManualViewMode(true);
-                setPageViewMode("single");
-              }}
-              disabled={pageViewMode === "single"}
-            >
-              1페이지
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setManualViewMode(true);
-                setPageViewMode("spread");
-              }}
-              disabled={pageViewMode === "spread"}
-            >
-              2페이지
-            </button>
+    <main className={styles.appRoot}>
+      <div className={styles.app}>
+        <header className={styles.topbar}>
+          <div>
+            <h1 className={styles.title}>리딩 놀이터</h1>
+            <p className={styles.subtitle}>아동용 읽기 연습 CX 화면</p>
           </div>
-        </div>
+          <span className={styles.chip}>
+            {readingState === "final_review" ? "복습 추천 완료" : `문장 ${sentenceIndex + 1}/${sentences.length || 0}`}
+          </span>
+        </header>
 
-        <div
-          style={{
-            marginTop: "0.8rem",
-            display: "grid",
-            gap: "0.75rem",
-            gridTemplateColumns: pageViewMode === "spread" ? "repeat(2, minmax(0, 1fr))" : "1fr"
-          }}
-        >
-          <article className="panel" style={{ padding: "0.65rem" }}>
-            <img
-              src={imageUrl}
-              alt={`book page ${pageNumber}`}
-              style={{ width: "100%", maxHeight: "440px", objectFit: "contain", borderRadius: "10px" }}
-            />
-          </article>
-          {pageViewMode === "spread" && (
-            <article className="panel" style={{ padding: "0.65rem" }}>
-              {nextPageImageUrl ? (
-                <img
-                  src={nextPageImageUrl}
-                  alt={`book page ${nextPageNumber ?? pageNumber + 1}`}
-                  style={{ width: "100%", maxHeight: "440px", objectFit: "contain", borderRadius: "10px" }}
-                />
-              ) : (
-                <div
-                  style={{
-                    minHeight: "220px",
-                    display: "grid",
-                    placeContent: "center",
-                    borderRadius: "10px",
-                    border: "1px dashed #b9cced",
-                    color: "#4e617f"
+        {readingState !== "final_review" && (
+          <section className={styles.card}>
+            <h2>{readingTitle}</h2>
+            <p className={styles.subtitle}>
+              페이지 {pageNumber} / {totalPages || "?"}
+            </p>
+            <div className={styles.readingToolbar}>
+              <p className={styles.subtitle}>
+                현재: {pageViewMode === "spread" ? "두 페이지 보기" : "한 페이지 보기"}
+              </p>
+              <div className={styles.viewToggle}>
+                <button
+                  type="button"
+                  className={`${styles.viewButton} ${pageViewMode === "single" ? styles.viewButtonActive : ""}`}
+                  onClick={() => {
+                    setManualViewMode(true);
+                    setPageViewMode("single");
                   }}
                 >
-                  다음 페이지가 없습니다.
+                  1페이지
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.viewButton} ${pageViewMode === "spread" ? styles.viewButtonActive : ""}`}
+                  onClick={() => {
+                    setManualViewMode(true);
+                    setPageViewMode("spread");
+                  }}
+                >
+                  2페이지
+                </button>
+              </div>
+            </div>
+
+            <div className={`${styles.illustration} ${pageViewMode === "spread" ? styles.illustrationSpread : ""}`}>
+              <div className={styles.pagePanel}>
+                <img className={styles.pageImage} src={imageUrl} alt={`page-${pageNumber}`} />
+              </div>
+              {pageViewMode === "spread" && (
+                <div className={styles.pagePanel}>
+                  {nextPageImageUrl ? (
+                    <img
+                      className={styles.pageImage}
+                      src={nextPageImageUrl}
+                      alt={`page-${nextPageNumber ?? pageNumber + 1}`}
+                    />
+                  ) : (
+                    <span>다음 페이지 미리보기 없음</span>
+                  )}
                 </div>
               )}
-            </article>
-          )}
-        </div>
-      </section>
+            </div>
 
-      <section className="panel" style={{ marginTop: "1rem" }}>
-        <h2>문장 따라 읽기</h2>
-        <p className="muted">
-          문장 {sentenceTokens.length === 0 ? 0 : sentenceIndex + 1} / {sentenceTokens.length}
-        </p>
-        <p style={{ marginTop: "0.6rem", fontSize: "1.05rem", lineHeight: 1.9 }}>
-          {currentTokens.length === 0 && <span className="muted">문장이 없습니다.</span>}
-          {currentTokens.map((token, index) => {
-            const isMastered = currentMastered[index];
-            const isActive = readingState === "ai_playing" && activeWordIndex === index;
-            const isSelected = readingState === "child_recording" && selectedWordIndexes.includes(index);
-            return (
+            <h3 style={{ margin: "16px 0 0" }}>문장 따라 읽기</h3>
+            <p className={styles.subtitle}>
+              문장 {sentences.length === 0 ? 0 : sentenceIndex + 1} / {sentences.length}
+            </p>
+
+            <div className={sentenceBoxClassName}>
+              <p className={styles.script}>
+                {currentTokens.length === 0 && <span className={styles.scriptToken}>문장이 없습니다.</span>}
+                {currentTokens.map((token, index) => {
+                  const filled =
+                    currentMastered[index] ||
+                    selectedWordIndexes.includes(index) ||
+                    (readingState === "ai_playing" && activeWordIndex === index);
+                  return (
+                    <button
+                      key={`${sentenceIndex}-${index}-${token}`}
+                      type="button"
+                      className={`${styles.scriptToken} ${filled ? styles.tokenFilled : ""}`}
+                      onClick={() => toggleWordSelection(index)}
+                      disabled={readingState !== "child_recording" || currentMastered[index]}
+                    >
+                      {token}
+                    </button>
+                  );
+                })}
+              </p>
+            </div>
+
+            <div className={styles.controls}>
+              <button type="button" className={`${styles.btn} ${styles.btnSoft}`} onClick={handleStop}>
+                중지
+              </button>
               <button
-                key={`${sentenceIndex}-${index}-${token}`}
                 type="button"
-                onClick={() => toggleWordSelection(index)}
-                disabled={readingState !== "child_recording" || isMastered}
-                style={{
-                  marginRight: "0.45rem",
-                  marginBottom: "0.4rem",
-                  borderRadius: "10px",
-                  border: isMastered || isSelected ? "1px solid #2c7efc" : "1px solid #d4e1f7",
-                  background: isMastered || isSelected || isActive ? "#e8f1ff" : "transparent",
-                  color: isMastered || isSelected || isActive ? "#1459bb" : "#11203a",
-                  padding: "0.2rem 0.45rem",
-                  cursor: readingState === "child_recording" && !isMastered ? "pointer" : "default",
-                  fontSize: "1rem"
-                }}
+                className={`${styles.btn} ${styles.btnSoft}`}
+                onClick={completeChildRecording}
+                disabled={readingState !== "child_recording"}
               >
-                {token}
-              </button>
-            );
-          })}
-        </p>
-
-        <p className="muted" style={{ marginTop: "0.8rem" }}>
-          {statusMessage}
-        </p>
-
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.8rem" }}>
-          <button type="button" onClick={handleStop}>
-            중지
-          </button>
-          <button type="button" onClick={goPrevSentence} disabled={sentenceIndex <= 0}>
-            이전 문장
-          </button>
-          <button
-            type="button"
-            onClick={() => goNextSentenceOrPage(true)}
-            disabled={readingState === "page_transition_wait" || readingState === "final_review"}
-          >
-            다음 문장 / 페이지
-          </button>
-          <button
-            type="button"
-            onClick={completeChildRecording}
-            disabled={readingState !== "child_recording"}
-          >
-            읽기 완료
-          </button>
-        </div>
-
-        {readingState === "page_review" && (
-          <article
-            style={{
-              marginTop: "1rem",
-              border: "1px solid #bfd8ff",
-              borderRadius: "12px",
-              background: "#f3f8ff",
-              padding: "0.8rem"
-            }}
-          >
-            <strong>이 단어 한 번 더 해볼까?</strong>
-            <div style={{ marginTop: "0.6rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-              {pageReviewWords.map((word) => (
-                <span
-                  key={`page-review-${word}`}
-                  style={{
-                    border: "1px solid #c7dcff",
-                    borderRadius: "999px",
-                    padding: "0.2rem 0.55rem",
-                    color: "#1459bb",
-                    background: "#ffffff"
-                  }}
-                >
-                  {word}
-                </span>
-              ))}
-            </div>
-            <div style={{ marginTop: "0.7rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-              <button type="button" onClick={startPageReviewRetry}>
-                다시 해보기
-              </button>
-              <button type="button" onClick={skipPageReview}>
-                다음 페이지로
+                읽기 완료
               </button>
             </div>
-          </article>
+
+            <div className={styles.sentenceNav}>
+              <button
+                type="button"
+                className={`${styles.btn} ${styles.btnSoft}`}
+                onClick={goPrevSentence}
+                disabled={sentenceIndex <= 0}
+              >
+                이전 문장
+              </button>
+              <button
+                type="button"
+                className={`${styles.btn} ${styles.btnSoft}`}
+                onClick={() => goNextSentenceOrPage(true)}
+                disabled={readingState === "page_transition_wait"}
+              >
+                다음 문장 / 페이지
+              </button>
+            </div>
+
+            <p className={styles.statusLine}>{statusMessage}</p>
+
+            {readingState === "page_review" && (
+              <div className={styles.pageReview}>
+                <strong>이 단어 한 번 더 해볼까?</strong>
+                <ul className={styles.reviewList}>
+                  {pageReviewWords.map((word) => (
+                    <li key={`review-${word}`} className={styles.reviewWord}>
+                      {word}
+                    </li>
+                  ))}
+                </ul>
+                <div className={styles.controls}>
+                  <button
+                    type="button"
+                    className={`${styles.btn} ${styles.btnSoft}`}
+                    onClick={startPageReviewRetry}
+                  >
+                    다시 해보기
+                  </button>
+                  <button
+                    type="button"
+                    className={`${styles.btn} ${styles.btnSoft}`}
+                    onClick={skipPageReview}
+                  >
+                    다음 페이지로
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
         )}
 
         {readingState === "final_review" && (
-          <article
-            style={{
-              marginTop: "1rem",
-              border: "1px solid #bfd8ff",
-              borderRadius: "12px",
-              background: "#f3f8ff",
-              padding: "0.8rem"
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>AI 추천 복습</h3>
-            {finalReviewWords.length === 0 ? (
-              <p className="muted">오늘은 추천 복습 단어가 없어요. 정말 잘했어요!</p>
-            ) : (
-              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                {finalReviewWords.map((entry) => (
-                  <span
-                    key={`final-review-${entry.word}`}
-                    style={{
-                      border: "1px solid #c7dcff",
-                      borderRadius: "999px",
-                      padding: "0.2rem 0.55rem",
-                      color: "#1459bb",
-                      background: "#ffffff"
-                    }}
-                  >
-                    {entry.word} · 추천 {entry.count}회
-                  </span>
-                ))}
-              </div>
-            )}
-            <div style={{ marginTop: "0.7rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-              <button type="button" onClick={resetFinalReviewAndRestart}>
+          <section className={`${styles.card} ${styles.resultCard}`}>
+            <h2>AI 추천 복습</h2>
+            <p className={styles.subtitle}>
+              {finalReviewWords.length === 0
+                ? "오늘은 추천 복습 단어가 없어요. 정말 잘했어요!"
+                : "자주 어려웠던 단어를 먼저 복습해보자."}
+            </p>
+            <ul className={styles.reviewList}>
+              {finalReviewWords.length === 0 && <li className={styles.reviewWord}>모든 단어 안정적</li>}
+              {finalReviewWords.map((entry) => (
+                <li key={`final-${entry.word}`} className={styles.reviewWord}>
+                  {entry.word} · 추천 {entry.count}회
+                </li>
+              ))}
+            </ul>
+            <div className={styles.controls}>
+              <button
+                type="button"
+                className={`${styles.btn} ${styles.btnSoft}`}
+                onClick={resetFinalReviewAndRestart}
+              >
                 추천 단어 다시 읽기
               </button>
-              <Link href="/library">책 목록으로</Link>
+              <Link href="/library" className={`${styles.btn} ${styles.btnSoft}`}>
+                다음 책 보기
+              </Link>
             </div>
-          </article>
+          </section>
         )}
-      </section>
 
-      <section className="panel" style={{ marginTop: "1rem" }}>
-        <h2>보조 정보</h2>
-        <p className="muted">
-          단어 타이밍 메타데이터: {hasTimingMetadata ? "사용 가능" : "없음"}
-        </p>
-        {audioUrl ? (
-          <audio controls src={audioUrl} style={{ width: "100%" }} />
-        ) : (
-          <p className="muted">이 페이지는 저장된 TTS 오디오가 없습니다.</p>
+        {audioUrl && (
+          <section className={`${styles.card} ${styles.resultCard}`}>
+            <p className={styles.subtitle}>TTS 미리듣기</p>
+            <audio controls src={audioUrl} style={{ width: "100%" }} />
+          </section>
         )}
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.7rem" }}>
-          {previousPageNumber ? (
-            <Link href={`/session/${bookId}/${previousPageNumber}`}>이전 페이지</Link>
-          ) : (
-            <span className="muted">첫 페이지</span>
-          )}
-          {nextPageNumber ? (
-            <Link href={`/session/${bookId}/${nextPageNumber}`}>다음 페이지</Link>
-          ) : (
-            <span className="muted">마지막 페이지</span>
-          )}
-        </div>
-      </section>
+
+        <nav className={styles.footerNav}>
+          <Link href="/library" className={styles.footerNavItem}>
+            1. 책 고르기
+          </Link>
+          <span
+            className={`${styles.footerNavItem} ${
+              readingState === "final_review" ? "" : styles.footerNavActive
+            }`}
+          >
+            2. 읽기 연습
+          </span>
+          <span
+            className={`${styles.footerNavItem} ${
+              readingState === "final_review" ? styles.footerNavActive : ""
+            }`}
+          >
+            3. 결과 보기
+          </span>
+        </nav>
+
+        {wordTimings.length === 0 && (
+          <div className={styles.errorBox}>
+            이 페이지는 단어 타이밍 메타데이터가 없어 문장 루프 중심으로 안내합니다.
+          </div>
+        )}
+      </div>
     </main>
   );
 }

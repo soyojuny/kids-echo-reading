@@ -39,6 +39,8 @@
 | `id` | uuid | PK |
 | `title` | text | 필수 |
 | `author` | text | 선택 |
+| `category` | text | `animal`, `adventure`, `daily`, `science`, `emotion` |
+| `reading_level` | int | `1..3` |
 | `cover_path` | text | 선택 |
 | `default_tts_profile_id` | uuid | 부모 기본값 또는 책 기본값 |
 | `page_view_mode` | text | `single` or `spread` |
@@ -182,6 +184,8 @@
 ## Invariants
 
 - `book_pages.page_number`는 같은 책 안에서 중복되면 안 된다
+- `books.category`는 정의된 카테고리 집합 안에서만 선택된다
+- `books.reading_level`은 `1..3` 범위 정수여야 한다
 - `book_pages.confirmed_text`가 없으면 `input_status=ready`가 될 수 없다
 - 정식 TTS 자산은 반드시 `text_version_id`와 `tts_profile_id`를 가져야 한다
 - 읽기 평가는 반드시 특정 `page_id`와 `text_version_id`에 귀속될 수 있어야 한다
@@ -199,4 +203,3 @@
 - 사용자/권한 다중 테넌시 상세 설계
 - 분석 대시보드용 집계 테이블
 - OCR 전용 파이프라인 세부 테이블
-

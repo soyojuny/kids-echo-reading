@@ -132,7 +132,12 @@ export default function AdminBooksPage() {
     }
   }, [pages, selectedPageId]);
 
-  const handleCreateBook = async (input: { title: string; author?: string }) => {
+  const handleCreateBook = async (input: {
+    title: string;
+    author?: string;
+    category: Book["category"];
+    readingLevel: Book["readingLevel"];
+  }) => {
     setIsMutating(true);
     setStatusMessage(undefined);
     try {

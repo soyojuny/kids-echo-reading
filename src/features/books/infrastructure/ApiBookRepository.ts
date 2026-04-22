@@ -15,7 +15,12 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 }
 
 export class ApiBookRepository implements BookRepository {
-  async create(input: { title: string; author?: string }): Promise<Book> {
+  async create(input: {
+    title: string;
+    author?: string;
+    category: Book["category"];
+    readingLevel: Book["readingLevel"];
+  }): Promise<Book> {
     const response = await fetch("/api/books", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

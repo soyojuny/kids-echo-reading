@@ -88,6 +88,8 @@ create table if not exists public.books (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   author text,
+  category text not null default 'daily' check (category in ('animal','adventure','daily','science','emotion')),
+  reading_level int not null default 1 check (reading_level between 1 and 3),
   cover_path text,
   default_tts_profile_id uuid references public.tts_profiles(id),
   page_view_mode text not null default 'single' check (page_view_mode in ('single','spread')),
@@ -181,11 +183,17 @@ create table if not exists public.word_assessments (
 );
 
 create index if not exists idx_book_pages_book_id on public.book_pages(book_id);
+create index if not exists idx_books_category on public.books(category);
+create index if not exists idx_books_reading_level on public.books(reading_level);
 create index if not exists idx_page_text_versions_page_id on public.page_text_versions(page_id);
 create index if not exists idx_page_tts_assets_page_id on public.page_tts_assets(page_id);
 create index if not exists idx_reading_attempts_session_id on public.reading_attempts(session_id);
 create index if not exists idx_word_assessments_attempt_id on public.word_assessments(attempt_id);
 ```
+
+이미 `books` 테이블을 운영 중인 프로젝트는 아래 마이그레이션 SQL을 추가로 실행:
+
+- `supabase/migrations/20260422_add_books_catalog_fields.sql`
 
 ## Step 4. Configure Local Environment
 
