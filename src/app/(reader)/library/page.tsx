@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createServerSupabaseClient } from "@/server/supabase/server";
 
+export const dynamic = "force-dynamic";
+
 type ReaderBookRow = {
   id: string;
   title: string;
