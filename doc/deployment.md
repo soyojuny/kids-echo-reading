@@ -36,7 +36,8 @@
 
 ### External Services
 
-- `Google Cloud Text-to-Speech`
+- `Google Cloud Text-to-Speech` (optional)
+- `Microsoft Edge Read Aloud TTS` via `node-edge-tts`
 - `Azure Speech Pronunciation Assessment`
 
 ## Runtime Boundaries
@@ -69,6 +70,9 @@
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `TTS_PROVIDER` (`fallback` or `edge`)
+- `EDGE_TTS_OUTPUT_FORMAT` (optional)
+- `EDGE_TTS_TIMEOUT_MS` (optional)
 - `GOOGLE_CLOUD_PROJECT_ID`
 - `GOOGLE_CLOUD_CLIENT_EMAIL`
 - `GOOGLE_CLOUD_PRIVATE_KEY`
@@ -124,4 +128,3 @@
 - 멀티 리전 배포
 - 큐 시스템 도입
 - 배치 OCR 운영 자동화
-

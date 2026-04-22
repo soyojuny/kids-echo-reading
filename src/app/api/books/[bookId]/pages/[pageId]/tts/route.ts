@@ -3,7 +3,7 @@ import type { PageTtsAsset } from "@/features/tts/types/PageTtsAsset";
 import { normalizePageText } from "@/server/supabase/bookPages";
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { resolveTtsProfileForPage } from "@/server/supabase/tts";
-import { synthesizeFallbackPageTts } from "@/server/tts/fallbackSynthesis";
+import { synthesizePageTts } from "@/server/tts/synthesis";
 
 type RouteParams = {
   params: Promise<{ bookId: string; pageId: string }>;
@@ -169,17 +169,18 @@ export async function POST(request: Request, context: RouteParams) {
       textVersionId = (createdTextVersion as CurrentTextVersionRow).id;
     }
 
-    const synthesized = synthesizeFallbackPageTts({
+    const synthesized = await synthesizePageTts({
       text: confirmedText,
+      voiceName: ttsProfile.voiceName,
       speakingRate: ttsProfile.speakingRate,
       sentencePauseLevel: ttsProfile.sentencePauseLevel
     });
 
-    const audioPath = `${bookId}/${pageId}/${Date.now()}-${crypto.randomUUID()}.wav`;
+    const audioPath = `${bookId}/${pageId}/${Date.now()}-${crypto.randomUUID()}.${synthesized.extension}`;
     const { error: uploadError } = await supabase.storage
       .from("book-audio")
       .upload(audioPath, synthesized.audioBuffer, {
-        contentType: "audio/wav",
+        contentType: synthesized.contentType,
         upsert: false
       });
 
@@ -218,6 +219,7 @@ export async function POST(request: Request, context: RouteParams) {
         name: ttsProfile.name,
         speakingRate: ttsProfile.speakingRate
       },
+      provider: synthesized.provider,
       asset: mapAsset(row, signedAudio?.signedUrl)
     });
   } catch (error) {
@@ -227,4 +229,3 @@ export async function POST(request: Request, context: RouteParams) {
     );
   }
 }
-

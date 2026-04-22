@@ -2,13 +2,13 @@ import type { PageTtsTimingJson } from "@/features/tts/types/PageTtsAsset";
 import type { SentencePauseLevel } from "@/features/tts/types/TtsProfile";
 import type { WordTiming } from "@/shared/types/WordTiming";
 
-type FallbackSynthesisInput = {
+export type FallbackSynthesisInput = {
   text: string;
   speakingRate: number;
   sentencePauseLevel: SentencePauseLevel;
 };
 
-type FallbackSynthesisResult = {
+export type FallbackSynthesisResult = {
   audioBuffer: Buffer;
   durationMs: number;
   timing: PageTtsTimingJson;
@@ -31,7 +31,7 @@ function pauseFactor(level: SentencePauseLevel): number {
   return 0.22;
 }
 
-function buildWordTimings(
+export function estimateFallbackTiming(
   text: string,
   speakingRate: number,
   sentencePauseLevel: SentencePauseLevel
@@ -105,7 +105,7 @@ function encodePcm16MonoWav(pcm: Int16Array, sampleRate: number): Buffer {
 }
 
 export function synthesizeFallbackPageTts(input: FallbackSynthesisInput): FallbackSynthesisResult {
-  const timing = buildWordTimings(input.text, input.speakingRate, input.sentencePauseLevel);
+  const timing = estimateFallbackTiming(input.text, input.speakingRate, input.sentencePauseLevel);
   const totalSamples = Math.max(1, Math.ceil((timing.totalDurationMs / 1000) * SAMPLE_RATE));
   const pcm = new Int16Array(totalSamples);
 
@@ -137,4 +137,3 @@ export function synthesizeFallbackPageTts(input: FallbackSynthesisInput): Fallba
     timing
   };
 }
-
