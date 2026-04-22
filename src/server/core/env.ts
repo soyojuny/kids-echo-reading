@@ -1,7 +1,9 @@
 type RequiredServerEnvKey =
   | "NEXT_PUBLIC_SUPABASE_URL"
   | "NEXT_PUBLIC_SUPABASE_ANON_KEY"
-  | "SUPABASE_SERVICE_ROLE_KEY";
+  | "SUPABASE_SERVICE_ROLE_KEY"
+  | "AZURE_SPEECH_KEY"
+  | "AZURE_SPEECH_REGION";
 
 function readRequired(name: RequiredServerEnvKey): string {
   const value = process.env[name];
@@ -22,5 +24,12 @@ export function getServerSupabaseEnv() {
   return {
     ...getPublicSupabaseEnv(),
     serviceRoleKey: readRequired("SUPABASE_SERVICE_ROLE_KEY")
+  };
+}
+
+export function getAzureSpeechEnv() {
+  return {
+    key: readRequired("AZURE_SPEECH_KEY"),
+    region: readRequired("AZURE_SPEECH_REGION")
   };
 }

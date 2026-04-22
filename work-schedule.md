@@ -11,7 +11,7 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 | Phase 2 | 책 업로드와 수동 텍스트 입력 | In Progress | 책 생성, 다중 업로드, 순서 정렬, 페이지 편집기 |
 | Phase 3 | TTS와 하이라이트 | In Progress | TTS 프리셋, 오디오 생성, 하이라이트 |
 | Phase 4 | 아동 읽기 CX 정렬 (문서/데모 기준) | In Progress | 문장 루프 상태머신, 페이지 복습, 최종 추천 복습, 방향별 1/2페이지 |
-| Phase 5 | 따라읽기 평가 연동 | Pending | 녹음 업로드, Azure 평가, 단어별 결과 |
+| Phase 5 | 따라읽기 평가 연동 | In Progress | 녹음 업로드, Azure 평가, 단어별 결과 |
 | Phase 6 | 태블릿 UX/PWA 강화 | Pending | 설치성/캐시/이어보기 강화 |
 | Phase 7 | 입력 자동화 확장 | Pending | OCR 초안 생성 + 검수 UI |
 
@@ -57,10 +57,10 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 
 ### Phase 5. 따라읽기 평가
 
-- [ ] 녹음 수집 UI/업로드
-- [ ] Azure Pronunciation Assessment 호출
-- [ ] 결과 매핑 및 저장
-- [ ] 단어별 피드백 UI
+- [x] `2026-04-22` 녹음 수집 UI/업로드
+- [x] `2026-04-22` Azure Pronunciation Assessment 호출
+- [x] `2026-04-22` 결과 매핑 및 저장
+- [x] `2026-04-22` 단어별 피드백 UI
 
 ### Phase 6. 태블릿 UX/PWA 강화
 
@@ -88,3 +88,4 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 - `2026-04-21`: Phase 2 Supabase 연동 변경사항 커밋/원격 반영
 - `2026-04-21`: Phase 3 TTS 프리셋/생성 API/오디오 저장/리더 하이라이트 1차 구현
 - `2026-04-22`: Phase 4 아동 읽기 CX 정렬(문장 루프 상태머신, 페이지 복습, 최종 추천 복습, 방향별 1/2페이지) 1차 구현
+- `2026-04-22`: Phase 5 따라읽기 평가 연동(녹음 업로드, Azure 평가 API, reading_attempts/word_assessments 저장, 단어 피드백 UI) 1차 구현

@@ -44,6 +44,7 @@ export default async function ReaderSessionPage({ params }: SessionPageProps) {
     <ReaderSessionPlayer
       bookTitle={sessionPage.bookTitle}
       bookId={sessionPage.bookId}
+      pageId={sessionPage.pageId}
       pageNumber={sessionPage.pageNumber}
       totalPages={sessionPage.totalPages}
       imageUrl={sessionPage.imageUrl}

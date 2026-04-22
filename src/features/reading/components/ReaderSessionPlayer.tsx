@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  SentenceAssessmentResponse,
+  SentenceAssessmentWord
+} from "@/features/assessment/types/AssessmentTypes";
 import type { WordTiming } from "@/shared/types/WordTiming";
+import { splitSentences, tokenizeSentence } from "@/shared/utils/textSegmentation";
 import styles from "@/features/reading/components/ChildReadingUi.module.css";
 
 type PageViewMode = "single" | "spread";
@@ -20,6 +25,7 @@ type ReadingState =
 type ReaderSessionPlayerProps = {
   bookTitle: string;
   bookId: string;
+  pageId: string;
   pageNumber: number;
   totalPages: number;
   imageUrl: string;
@@ -36,32 +42,20 @@ type ReviewEntry = {
   count: number;
 };
 
+type RecordingState = "idle" | "recording" | "processing";
+
+type LastAssessment = {
+  provider: "azure";
+  score: SentenceAssessmentResponse["score"];
+  words: SentenceAssessmentWord[];
+  feedback: SentenceAssessmentResponse["feedback"];
+};
+
 const AUTO_NEXT_SENTENCE_MS = 2000;
 const AUTO_NEXT_PAGE_MS = 5000;
 const RETRY_PROMPT_MS = 900;
 const MAX_RETRY_COUNT = 1;
 const REVIEW_STORAGE_PREFIX = "kids-echo-reading-review";
-
-function splitSentences(text: string): string[] {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return [];
-  }
-
-  const matched = normalized
-    .match(/[^.!?。！？\n]+[.!?。！？]?/g)
-    ?.map((sentence) => sentence.trim())
-    .filter(Boolean);
-  return matched && matched.length > 0 ? matched : [normalized];
-}
-
-function tokenizeSentence(sentence: string): string[] {
-  return sentence
-    .trim()
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter(Boolean);
-}
 
 function getOrientationDefaultView(): PageViewMode {
   if (typeof window === "undefined") {
@@ -111,6 +105,107 @@ function toSortedReviewEntries(reviewMap: Record<string, number>): ReviewEntry[]
     .map(([word, count]) => ({ word, count }));
 }
 
+function mergeChannelsToMono(audioBuffer: AudioBuffer): Float32Array {
+  const { numberOfChannels, length } = audioBuffer;
+  const mono = new Float32Array(length);
+  for (let channel = 0; channel < numberOfChannels; channel += 1) {
+    const data = audioBuffer.getChannelData(channel);
+    for (let index = 0; index < length; index += 1) {
+      mono[index] += data[index] / numberOfChannels;
+    }
+  }
+  return mono;
+}
+
+function downsampleBuffer(source: Float32Array, sampleRate: number, targetRate: number): Float32Array {
+  if (targetRate >= sampleRate) {
+    return source;
+  }
+
+  const ratio = sampleRate / targetRate;
+  const targetLength = Math.floor(source.length / ratio);
+  const result = new Float32Array(targetLength);
+
+  for (let index = 0; index < targetLength; index += 1) {
+    const sourceStart = Math.floor(index * ratio);
+    const sourceEnd = Math.min(source.length, Math.floor((index + 1) * ratio));
+    let sum = 0;
+    let count = 0;
+
+    for (let sourceIndex = sourceStart; sourceIndex < sourceEnd; sourceIndex += 1) {
+      sum += source[sourceIndex];
+      count += 1;
+    }
+
+    result[index] = count > 0 ? sum / count : 0;
+  }
+
+  return result;
+}
+
+function encodePcm16Wav(samples: Float32Array, sampleRate: number): ArrayBuffer {
+  const bytesPerSample = 2;
+  const blockAlign = bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  let offset = 0;
+  const writeString = (value: string) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+    offset += value.length;
+  };
+
+  writeString("RIFF");
+  view.setUint32(offset, 36 + dataSize, true);
+  offset += 4;
+  writeString("WAVE");
+  writeString("fmt ");
+  view.setUint32(offset, 16, true);
+  offset += 4;
+  view.setUint16(offset, 1, true);
+  offset += 2;
+  view.setUint16(offset, 1, true);
+  offset += 2;
+  view.setUint32(offset, sampleRate, true);
+  offset += 4;
+  view.setUint32(offset, byteRate, true);
+  offset += 4;
+  view.setUint16(offset, blockAlign, true);
+  offset += 2;
+  view.setUint16(offset, 16, true);
+  offset += 2;
+  writeString("data");
+  view.setUint32(offset, dataSize, true);
+  offset += 4;
+
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    const pcm = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    view.setInt16(offset, pcm, true);
+    offset += 2;
+  }
+
+  return buffer;
+}
+
+async function convertToMonoWavBlob(source: Blob, targetSampleRate = 16000): Promise<Blob> {
+  const audioContext = new AudioContext();
+  try {
+    const sourceBuffer = await source.arrayBuffer();
+    const decoded = await audioContext.decodeAudioData(sourceBuffer);
+    const mono = mergeChannelsToMono(decoded);
+    const downsampled = downsampleBuffer(mono, decoded.sampleRate, targetSampleRate);
+    const wavBuffer = encodePcm16Wav(downsampled, targetSampleRate);
+    return new Blob([wavBuffer], { type: "audio/wav" });
+  } finally {
+    await audioContext.close();
+  }
+}
+
 function getSentenceBoxClassName(readingState: ReadingState): string {
   if (readingState === "ai_playing") {
     return `${styles.sentenceBox} ${styles.statePlay}`;
@@ -130,6 +225,7 @@ function getSentenceBoxClassName(readingState: ReadingState): string {
 export function ReaderSessionPlayer({
   bookTitle,
   bookId,
+  pageId,
   pageNumber,
   totalPages,
   imageUrl,
@@ -154,6 +250,10 @@ export function ReaderSessionPlayer({
   const [attemptCounts, setAttemptCounts] = useState<number[]>([]);
   const [selectedWordIndexes, setSelectedWordIndexes] = useState<number[]>([]);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
+  const [recordingState, setRecordingState] = useState<RecordingState>("idle");
+  const [recordingError, setRecordingError] = useState<string>();
+  const [sessionId, setSessionId] = useState<string>();
+  const [lastAssessment, setLastAssessment] = useState<LastAssessment | null>(null);
   const [pageReviewWords, setPageReviewWords] = useState<string[]>([]);
   const [finalReviewWords, setFinalReviewWords] = useState<ReviewEntry[]>([]);
   const [pageViewMode, setPageViewMode] = useState<PageViewMode>("single");
@@ -168,6 +268,9 @@ export function ReaderSessionPlayer({
   const pageTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aiFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
 
   const currentTokens = sentenceTokens[sentenceIndex] ?? [];
   const currentMastered = masteredBySentence[sentenceIndex] ?? [];
@@ -203,10 +306,71 @@ export function ReaderSessionPlayer({
     speechUtteranceRef.current = null;
   }
 
+  function stopRecordingStream() {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    mediaRecorderRef.current = null;
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        track.stop();
+      });
+      mediaStreamRef.current = null;
+    }
+    recordingChunksRef.current = [];
+    setRecordingState("idle");
+  }
+
   function stopAllAutomation() {
     clearFlowTimers();
     stopSpeech();
+    stopRecordingStream();
     setActiveWordIndex(-1);
+  }
+
+  async function startRecordingCapture() {
+    if (typeof window === "undefined" || typeof navigator === "undefined") {
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setRecordingError("현재 브라우저는 마이크 녹음을 지원하지 않습니다.");
+      return;
+    }
+    if (mediaRecorderRef.current || recordingState === "recording" || recordingState === "processing") {
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      const mimeCandidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/mp4"
+      ];
+      const supported = mimeCandidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+      const recorder = supported ? new MediaRecorder(stream, { mimeType: supported }) : new MediaRecorder(stream);
+
+      recordingChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecordingError(undefined);
+      setRecordingState("recording");
+      setStatusMessage("녹음 중이에요. 문장을 끝까지 읽은 뒤 채점 버튼을 눌러주세요.");
+    } catch (error) {
+      setRecordingState("idle");
+      setRecordingError(error instanceof Error ? error.message : "마이크 접근에 실패했습니다.");
+    }
   }
 
   function getRemainingWordIndexes(targetSentenceIndex: number, matrix: boolean[][]): number[] {
@@ -253,9 +417,12 @@ export function ReaderSessionPlayer({
     setSentenceIndex(targetSentenceIndex);
     sentenceIndexRef.current = targetSentenceIndex;
     setSelectedWordIndexes([]);
+    setLastAssessment(null);
     setActiveWordIndex(-1);
     setReadingState("child_recording");
+    setRecordingError(undefined);
     setStatusMessage("자동 진행: 문장 전체를 따라 읽어보자.");
+    void startRecordingCapture();
   }
 
   function beginAiPlaying(targetSentenceIndex: number) {
@@ -313,6 +480,110 @@ export function ReaderSessionPlayer({
     );
   }
 
+  async function assessRecordedSentence(audioBlob: Blob) {
+    const currentSentence = sentenceIndexRef.current;
+    const sentence = sentences[currentSentence] ?? "";
+
+    setRecordingState("processing");
+    setRecordingError(undefined);
+    setStatusMessage("채점 중입니다. 잠시만 기다려주세요.");
+
+    try {
+      const wavBlob = await convertToMonoWavBlob(audioBlob);
+      const formData = new FormData();
+      formData.set("audio", new File([wavBlob], `reading-${Date.now()}.wav`, { type: "audio/wav" }));
+      formData.set("sentenceIndex", String(currentSentence));
+      formData.set("sentenceText", sentence);
+      formData.set("locale", "en-US");
+      if (sessionId) {
+        formData.set("sessionId", sessionId);
+      }
+
+      const response = await fetch(`/api/reader/books/${bookId}/pages/${pageId}/assessment`, {
+        method: "POST",
+        body: formData
+      });
+      const payload = (await response.json()) as
+        | SentenceAssessmentResponse
+        | {
+            error?: string;
+          };
+
+      if (!response.ok || !("words" in payload)) {
+        throw new Error(("error" in payload ? payload.error : undefined) ?? "채점 요청에 실패했습니다.");
+      }
+
+      setSessionId(payload.sessionId);
+      setLastAssessment({
+        provider: payload.provider,
+        score: payload.score,
+        words: payload.words,
+        feedback: payload.feedback
+      });
+
+      const autoMatchedIndexes = payload.words
+        .filter((word) => word.state === "correct" || word.state === "partial")
+        .map((word) => word.index)
+        .filter((index) => Number.isInteger(index) && index >= 0);
+
+      setSelectedWordIndexes(autoMatchedIndexes);
+      completeChildRecording(autoMatchedIndexes, payload.feedback.message);
+      setRecordingState("idle");
+    } catch (error) {
+      setRecordingState("idle");
+      setRecordingError(error instanceof Error ? error.message : "채점에 실패했습니다.");
+      setStatusMessage("채점 실패. 단어를 수동 선택 후 완료할 수 있어요.");
+    }
+  }
+
+  async function stopRecordingAndAssess() {
+    if (readingState !== "child_recording") {
+      return;
+    }
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== "recording") {
+      setStatusMessage("녹음이 시작되지 않았어요. 먼저 녹음 시작 버튼을 눌러주세요.");
+      return;
+    }
+
+    const stoppedBlob = await new Promise<Blob>((resolve, reject) => {
+      recorder.addEventListener(
+        "stop",
+        () => {
+          const blob = new Blob(recordingChunksRef.current, {
+            type: recorder.mimeType || "audio/webm"
+          });
+          resolve(blob);
+        },
+        { once: true }
+      );
+      recorder.addEventListener(
+        "error",
+        () => {
+          reject(new Error("녹음 중 오류가 발생했습니다."));
+        },
+        { once: true }
+      );
+      recorder.stop();
+    });
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        track.stop();
+      });
+      mediaStreamRef.current = null;
+    }
+    mediaRecorderRef.current = null;
+
+    if (stoppedBlob.size === 0) {
+      setRecordingState("idle");
+      setRecordingError("녹음 데이터가 비어 있습니다. 다시 시도해주세요.");
+      return;
+    }
+
+    await assessRecordedSentence(stoppedBlob);
+  }
+
   function finalizePage(targetMatrix: boolean[][]) {
     const unmasteredWords = getPageUnmasteredWords(targetMatrix);
 
@@ -357,11 +628,15 @@ export function ReaderSessionPlayer({
     finalizePage(matrix);
   }
 
-  function completeChildRecording() {
+  function completeChildRecording(
+    selectedIndexesOverride?: number[],
+    successMessageOverride?: string
+  ) {
     if (readingState !== "child_recording") {
       return;
     }
 
+    stopRecordingStream();
     const currentSentence = sentenceIndexRef.current;
     const nextAttempt = (attemptCounts[currentSentence] ?? 0) + 1;
     const nextAttemptCounts = [...attemptCounts];
@@ -369,7 +644,8 @@ export function ReaderSessionPlayer({
     setAttemptCounts(nextAttemptCounts);
 
     const nextMatrix = masteredBySentence.map((row) => [...row]);
-    selectedWordIndexes.forEach((wordIndex) => {
+    const selectedIndexes = selectedIndexesOverride ?? selectedWordIndexes;
+    selectedIndexes.forEach((wordIndex) => {
       if (nextMatrix[currentSentence] && typeof nextMatrix[currentSentence][wordIndex] === "boolean") {
         nextMatrix[currentSentence][wordIndex] = true;
       }
@@ -382,7 +658,7 @@ export function ReaderSessionPlayer({
     const remainingIndexes = getRemainingWordIndexes(currentSentence, nextMatrix);
     if (remainingIndexes.length > 0 && nextAttempt <= MAX_RETRY_COUNT) {
       setReadingState("sentence_retry_prompt");
-      setStatusMessage("이 단어 한 번 더 해볼까?");
+      setStatusMessage(successMessageOverride ?? "이 단어 한 번 더 해볼까?");
       retryPromptTimerRef.current = setTimeout(() => {
         beginAiPlaying(currentSentence);
       }, RETRY_PROMPT_MS);
@@ -391,9 +667,11 @@ export function ReaderSessionPlayer({
 
     setReadingState("sentence_done");
     if (remainingIndexes.length > 0) {
-      setStatusMessage("남은 단어는 페이지 끝에서 다시 해보자.");
+      setStatusMessage(successMessageOverride ?? "남은 단어는 페이지 끝에서 다시 해보자.");
     } else {
-      setStatusMessage(`잘 읽었어요. ${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`);
+      setStatusMessage(
+        successMessageOverride ?? `잘 읽었어요. ${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`
+      );
     }
 
     sentenceTransitionTimerRef.current = setTimeout(() => {
@@ -489,6 +767,9 @@ export function ReaderSessionPlayer({
     pageReviewDoneRef.current = false;
     setPageReviewWords([]);
     setFinalReviewWords([]);
+    setLastAssessment(null);
+    setRecordingError(undefined);
+    setRecordingState("idle");
 
     const initialMastered = sentenceTokens.map((tokens) => tokens.map(() => false));
     setMasteredBySentence(initialMastered);
@@ -613,7 +894,11 @@ export function ReaderSessionPlayer({
                       type="button"
                       className={`${styles.scriptToken} ${filled ? styles.tokenFilled : ""}`}
                       onClick={() => toggleWordSelection(index)}
-                      disabled={readingState !== "child_recording" || currentMastered[index]}
+                      disabled={
+                        readingState !== "child_recording" ||
+                        currentMastered[index] ||
+                        recordingState === "processing"
+                      }
                     >
                       {token}
                     </button>
@@ -629,10 +914,22 @@ export function ReaderSessionPlayer({
               <button
                 type="button"
                 className={`${styles.btn} ${styles.btnSoft}`}
-                onClick={completeChildRecording}
-                disabled={readingState !== "child_recording"}
+                onClick={recordingState === "recording" ? stopRecordingAndAssess : startRecordingCapture}
+                disabled={readingState !== "child_recording" || recordingState === "processing"}
               >
-                읽기 완료
+                {recordingState === "recording"
+                  ? "녹음 종료 + 채점"
+                  : recordingState === "processing"
+                    ? "채점 중..."
+                    : "녹음 시작"}
+              </button>
+              <button
+                type="button"
+                className={`${styles.btn} ${styles.btnSoft}`}
+                onClick={() => completeChildRecording()}
+                disabled={readingState !== "child_recording" || recordingState === "processing"}
+              >
+                수동 완료
               </button>
             </div>
 
@@ -656,6 +953,30 @@ export function ReaderSessionPlayer({
             </div>
 
             <p className={styles.statusLine}>{statusMessage}</p>
+            {recordingError && <p className={styles.statusLine}>마이크/채점 오류: {recordingError}</p>}
+
+            {lastAssessment && (
+              <div className={styles.pageReview}>
+                <strong>
+                  단어 채점 결과 · 정답 {lastAssessment.feedback.goodWords}/{lastAssessment.words.length}
+                </strong>
+                <p className={styles.subtitle} style={{ marginTop: 6 }}>
+                  {lastAssessment.feedback.message}
+                </p>
+                <p className={styles.subtitle} style={{ marginTop: 6 }}>
+                  점수: 정확도 {Math.round(lastAssessment.score.accuracyScore ?? 0)} / 유창성{" "}
+                  {Math.round(lastAssessment.score.fluencyScore ?? 0)} / 완성도{" "}
+                  {Math.round(lastAssessment.score.completenessScore ?? 0)}
+                </p>
+                <ul className={styles.reviewList}>
+                  {lastAssessment.words.map((word) => (
+                    <li key={`assessment-word-${word.index}-${word.referenceWord}`} className={styles.reviewWord}>
+                      {word.referenceWord} · {word.state}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {readingState === "page_review" && (
               <div className={styles.pageReview}>
