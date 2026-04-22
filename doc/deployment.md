@@ -73,6 +73,8 @@
 - `TTS_PROVIDER` (`fallback` or `edge`)
 - `EDGE_TTS_OUTPUT_FORMAT` (optional)
 - `EDGE_TTS_TIMEOUT_MS` (optional)
+- `EDGE_TTS_HARD_TIMEOUT_MS` (optional, recommended for serverless timeout safety)
+- `EDGE_TTS_ALLOW_SERVERLESS` (optional, default `false`)
 - `GOOGLE_CLOUD_PROJECT_ID`
 - `GOOGLE_CLOUD_CLIENT_EMAIL`
 - `GOOGLE_CLOUD_PRIVATE_KEY`

@@ -5,6 +5,9 @@ import { createServerSupabaseClient } from "@/server/supabase/server";
 import { resolveTtsProfileForPage } from "@/server/supabase/tts";
 import { synthesizePageTts } from "@/server/tts/synthesis";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 type RouteParams = {
   params: Promise<{ bookId: string; pageId: string }>;
 };

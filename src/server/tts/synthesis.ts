@@ -29,10 +29,20 @@ function readConfiguredProvider(): TtsProvider {
   return "fallback";
 }
 
+function shouldUseEdgeOnCurrentRuntime(): boolean {
+  const isVercel = process.env.VERCEL === "1";
+  const allowServerlessEdge = process.env.EDGE_TTS_ALLOW_SERVERLESS === "true";
+
+  if (isVercel && !allowServerlessEdge) {
+    return false;
+  }
+  return true;
+}
+
 export async function synthesizePageTts(input: SynthesizePageTtsInput): Promise<SynthesizePageTtsResult> {
   const configuredProvider = readConfiguredProvider();
 
-  if (configuredProvider === "edge") {
+  if (configuredProvider === "edge" && shouldUseEdgeOnCurrentRuntime()) {
     try {
       const edgeResult = await synthesizeEdgePageTts({
         text: input.text,
@@ -50,6 +60,8 @@ export async function synthesizePageTts(input: SynthesizePageTtsInput): Promise<
     } catch (error) {
       console.error("Edge TTS failed and fallback synthesis will be used.", error);
     }
+  } else if (configuredProvider === "edge") {
+    console.warn("Edge TTS is disabled in this runtime. Falling back to local synthesis.");
   }
 
   const fallbackResult = synthesizeFallbackPageTts({

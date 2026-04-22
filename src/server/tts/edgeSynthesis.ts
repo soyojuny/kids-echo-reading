@@ -1,10 +1,43 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { EdgeTTS } from "node-edge-tts";
 import type { PageTtsTimingJson } from "@/features/tts/types/PageTtsAsset";
 import type { SentencePauseLevel } from "@/features/tts/types/TtsProfile";
 import { estimateFallbackTiming } from "@/server/tts/fallbackSynthesis";
+
+// `ws` optional native addons can fail to load in some local runtimes.
+// Force pure JS path to avoid `bufferUtil.mask is not a function`.
+if (!process.env.WS_NO_BUFFER_UTIL) {
+  process.env.WS_NO_BUFFER_UTIL = "1";
+}
+if (!process.env.WS_NO_UTF_8_VALIDATE) {
+  process.env.WS_NO_UTF_8_VALIDATE = "1";
+}
+
+type EdgeTtsModule = {
+  EdgeTTS: new (config?: {
+    voice?: string;
+    lang?: string;
+    outputFormat?: string;
+    saveSubtitles?: boolean;
+    proxy?: string;
+    rate?: string;
+    pitch?: string;
+    volume?: string;
+    timeout?: number;
+  }) => {
+    ttsPromise(text: string, audioPath: string): Promise<unknown>;
+  };
+};
+
+let edgeTtsModulePromise: Promise<EdgeTtsModule> | undefined;
+
+async function loadEdgeTtsModule(): Promise<EdgeTtsModule> {
+  if (!edgeTtsModulePromise) {
+    edgeTtsModulePromise = import("node-edge-tts") as Promise<EdgeTtsModule>;
+  }
+  return edgeTtsModulePromise;
+}
 
 type EdgeSynthesisInput = {
   text: string;
@@ -67,6 +100,38 @@ function readTimeoutMs(): number {
   return Math.round(parsed);
 }
 
+function readHardTimeoutMs(): number {
+  const raw = process.env.EDGE_TTS_HARD_TIMEOUT_MS?.trim();
+  if (!raw) {
+    return 8_000;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 8_000;
+  }
+
+  return Math.round(parsed);
+}
+
+async function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Edge TTS hard timeout exceeded (${timeoutMs}ms)`));
+    }, timeoutMs);
+
+    task
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
 function parseSubtitleDurationMs(raw: string): number | undefined {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -92,6 +157,7 @@ export async function synthesizeEdgePageTts(input: EdgeSynthesisInput): Promise<
   const tempDir = await mkdtemp(path.join(tmpdir(), "edge-tts-"));
   const audioPath = path.join(tempDir, "page.mp3");
   const subtitlePath = `${audioPath}.json`;
+  const { EdgeTTS } = await loadEdgeTtsModule();
 
   const voiceName = normalizeEdgeVoiceName(input.voiceName);
   const tts = new EdgeTTS({
@@ -104,7 +170,7 @@ export async function synthesizeEdgePageTts(input: EdgeSynthesisInput): Promise<
   });
 
   try {
-    await tts.ttsPromise(input.text, audioPath);
+    await withTimeout(tts.ttsPromise(input.text, audioPath), readHardTimeoutMs());
     const audioBuffer = await readFile(audioPath);
     const estimatedTiming = estimateFallbackTiming(
       input.text,
