@@ -1,6 +1,6 @@
 # Kids Echo Reading Development Schedule
 
-Last Updated: `2026-04-21`
+Last Updated: `2026-04-22`
 Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 
 ## Overall Phase Plan
@@ -10,9 +10,10 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 | Phase 1 | 기본 프로젝트 셋업 | In Progress | Next.js + Supabase + PWA 골격, 로그인 없는 관리자 시작 화면 |
 | Phase 2 | 책 업로드와 수동 텍스트 입력 | In Progress | 책 생성, 다중 업로드, 순서 정렬, 페이지 편집기 |
 | Phase 3 | TTS와 하이라이트 | In Progress | TTS 프리셋, 오디오 생성, 하이라이트 |
-| Phase 4 | 따라읽기 평가 | Pending | 녹음 업로드, Azure 평가, 단어별 결과 |
-| Phase 5 | 태블릿 UX/PWA 강화 | Pending | 설치성/캐시/이어보기 강화 |
-| Phase 6 | 입력 자동화 확장 | Pending | OCR 초안 생성 + 검수 UI |
+| Phase 4 | 아동 읽기 CX 정렬 (문서/데모 기준) | In Progress | 문장 루프 상태머신, 페이지 복습, 최종 추천 복습, 방향별 1/2페이지 |
+| Phase 5 | 따라읽기 평가 연동 | Pending | 녹음 업로드, Azure 평가, 단어별 결과 |
+| Phase 6 | 태블릿 UX/PWA 강화 | Pending | 설치성/캐시/이어보기 강화 |
+| Phase 7 | 입력 자동화 확장 | Pending | OCR 초안 생성 + 검수 UI |
 
 ## Detailed Task Board
 
@@ -46,21 +47,29 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 - [x] `2026-04-21` TTS 오디오 저장 및 메타데이터 저장
 - [x] `2026-04-21` 읽기 화면 재생 + 문장/단어 하이라이트
 
-### Phase 4. 따라읽기 평가
+### Phase 4. 아동 읽기 CX 정렬 (문서/데모 기준)
+
+- [x] `2026-04-22` 읽기 상태머신(`idle/ai_playing/child_recording/retry/page_review/final_review`) UI 반영
+- [x] `2026-04-22` 문장 단위 자동 이동(2초), 페이지 자동 이동(5초) 타이머 반영
+- [x] `2026-04-22` 남은 단어 재시도 패널 및 페이지 복습 플로우 반영
+- [x] `2026-04-22` 마지막 페이지 AI 추천 복습 화면 반영(점수 중심 화면 미사용)
+- [x] `2026-04-22` 방향별 기본 보기(가로 2페이지/세로 1페이지) + 수동 토글 우선 반영
+
+### Phase 5. 따라읽기 평가
 
 - [ ] 녹음 수집 UI/업로드
 - [ ] Azure Pronunciation Assessment 호출
 - [ ] 결과 매핑 및 저장
 - [ ] 단어별 피드백 UI
 
-### Phase 5. 태블릿 UX/PWA 강화
+### Phase 6. 태블릿 UX/PWA 강화
 
 - [ ] landscape/portrait 기본 정책 반영
 - [ ] 홈 화면 설치성 점검
 - [ ] 현재/다음 페이지 자산 프리캐시
 - [ ] 마지막 읽던 책 이어보기
 
-### Phase 6. 입력 자동화 확장
+### Phase 7. 입력 자동화 확장
 
 - [ ] OCR 자동 초안 생성
 - [ ] OCR 결과 검수 플로우
@@ -78,3 +87,4 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 - `2026-04-21`: 변경 후 `npm run verify` 재실행 통과
 - `2026-04-21`: Phase 2 Supabase 연동 변경사항 커밋/원격 반영
 - `2026-04-21`: Phase 3 TTS 프리셋/생성 API/오디오 저장/리더 하이라이트 1차 구현
+- `2026-04-22`: Phase 4 아동 읽기 CX 정렬(문장 루프 상태머신, 페이지 복습, 최종 추천 복습, 방향별 1/2페이지) 1차 구현

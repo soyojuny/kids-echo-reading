@@ -8,6 +8,10 @@ type ReaderPageRow = {
   confirmed_text: string | null;
 };
 
+type ReaderPageImageRow = {
+  image_path: string;
+};
+
 type ReaderBookRow = {
   id: string;
   title: string;
@@ -25,6 +29,7 @@ export type ReaderSessionPageData = {
   pageNumber: number;
   totalPages: number;
   imageUrl: string;
+  nextPageImageUrl?: string;
   confirmedText: string;
   audioUrl?: string;
   wordTimings: WordTiming[];
@@ -170,6 +175,30 @@ export async function fetchReaderSessionPage(
   }
 
   const totalPages = count ?? 0;
+  const nextPageNumber = totalPages > page.page_number ? page.page_number + 1 : undefined;
+  let nextPageImageUrl: string | undefined;
+
+  if (nextPageNumber) {
+    const { data: nextPageData, error: nextPageError } = await supabase
+      .from("book_pages")
+      .select("image_path")
+      .eq("book_id", bookId)
+      .eq("page_number", nextPageNumber)
+      .maybeSingle();
+
+    if (nextPageError) {
+      throw new Error(nextPageError.message);
+    }
+
+    const nextPagePath = (nextPageData as ReaderPageImageRow | null)?.image_path;
+    if (nextPagePath) {
+      const { data: nextImageSigned } = await supabase.storage
+        .from("book-pages")
+        .createSignedUrl(nextPagePath, 60 * 60);
+      nextPageImageUrl = nextImageSigned?.signedUrl;
+    }
+  }
+
   return {
     bookId: book.id,
     bookTitle: book.title,
@@ -177,11 +206,11 @@ export async function fetchReaderSessionPage(
     pageNumber: page.page_number,
     totalPages,
     imageUrl: imageSigned.signedUrl,
+    nextPageImageUrl,
     confirmedText: page.confirmed_text ?? "",
     audioUrl,
     wordTimings,
     previousPageNumber: page.page_number > 1 ? page.page_number - 1 : undefined,
-    nextPageNumber: totalPages > page.page_number ? page.page_number + 1 : undefined
+    nextPageNumber
   };
 }
-

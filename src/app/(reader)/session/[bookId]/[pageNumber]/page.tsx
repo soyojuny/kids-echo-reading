@@ -47,6 +47,7 @@ export default async function ReaderSessionPage({ params }: SessionPageProps) {
       pageNumber={sessionPage.pageNumber}
       totalPages={sessionPage.totalPages}
       imageUrl={sessionPage.imageUrl}
+      nextPageImageUrl={sessionPage.nextPageImageUrl}
       confirmedText={sessionPage.confirmedText}
       audioUrl={sessionPage.audioUrl}
       wordTimings={sessionPage.wordTimings}
