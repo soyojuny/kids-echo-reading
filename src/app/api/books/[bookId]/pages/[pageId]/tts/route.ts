@@ -146,7 +146,8 @@ export async function POST(request: Request, context: RouteParams) {
     const { data: existingAssetData, error: existingAssetError } = await supabase
       .from("page_tts_assets")
       .select("id,audio_path")
-      .eq("page_id", pageId);
+      .eq("page_id", pageId)
+      .eq("status", "ready");
 
     if (existingAssetError) {
       return NextResponse.json({ error: existingAssetError.message }, { status: 500 });
@@ -232,6 +233,30 @@ export async function POST(request: Request, context: RouteParams) {
 
     const staleAssetIds = existingAssets.map((asset) => asset.id);
     const staleAudioPaths = existingAssets.map((asset) => asset.audio_path).filter(Boolean);
+
+    if (staleAssetIds.length > 0) {
+      const { error: markStaleError } = await supabase
+        .from("page_tts_assets")
+        .update({ status: "failed" })
+        .in("id", staleAssetIds);
+
+      if (markStaleError) {
+        try {
+          await supabase.from("page_tts_assets").delete().eq("id", row.id);
+        } catch {
+          // best-effort rollback
+        }
+        try {
+          await supabase.storage.from("book-audio").remove([audioPath]);
+        } catch {
+          // best-effort rollback
+        }
+        return NextResponse.json(
+          { error: `Failed to replace previous TTS assets: ${markStaleError.message}` },
+          { status: 500 }
+        );
+      }
+    }
 
     if (staleAudioPaths.length > 0) {
       const { error: removeStorageError } = await supabase.storage.from("book-audio").remove(staleAudioPaths);
