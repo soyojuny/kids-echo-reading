@@ -34,6 +34,11 @@ type TtsAssetRow = {
   created_at: string;
 };
 
+type ExistingTtsAssetRow = {
+  id: string;
+  audio_path: string;
+};
+
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null) {
     return undefined;
@@ -138,6 +143,17 @@ export async function POST(request: Request, context: RouteParams) {
       requestedProfileId: payload.ttsProfileId?.trim() || undefined
     });
 
+    const { data: existingAssetData, error: existingAssetError } = await supabase
+      .from("page_tts_assets")
+      .select("id,audio_path")
+      .eq("page_id", pageId);
+
+    if (existingAssetError) {
+      return NextResponse.json({ error: existingAssetError.message }, { status: 500 });
+    }
+
+    const existingAssets = (existingAssetData ?? []) as ExistingTtsAssetRow[];
+
     const { data: textVersionData, error: textVersionError } = await supabase
       .from("page_text_versions")
       .select("id")
@@ -208,10 +224,29 @@ export async function POST(request: Request, context: RouteParams) {
       .single();
 
     if (createAssetError) {
+      await supabase.storage.from("book-audio").remove([audioPath]).catch(() => undefined);
       return NextResponse.json({ error: createAssetError.message }, { status: 500 });
     }
 
     const row = assetData as TtsAssetRow;
+
+    const staleAssetIds = existingAssets.map((asset) => asset.id);
+    const staleAudioPaths = existingAssets.map((asset) => asset.audio_path).filter(Boolean);
+
+    if (staleAudioPaths.length > 0) {
+      const { error: removeStorageError } = await supabase.storage.from("book-audio").remove(staleAudioPaths);
+      if (removeStorageError) {
+        console.warn("Failed to remove stale TTS audio files.", removeStorageError);
+      }
+    }
+
+    if (staleAssetIds.length > 0) {
+      const { error: deleteAssetError } = await supabase.from("page_tts_assets").delete().in("id", staleAssetIds);
+      if (deleteAssetError) {
+        console.warn("Failed to remove stale TTS asset rows.", deleteAssetError);
+      }
+    }
+
     const { data: signedAudio } = await supabase.storage.from("book-audio").createSignedUrl(audioPath, 60 * 60);
 
     return NextResponse.json({

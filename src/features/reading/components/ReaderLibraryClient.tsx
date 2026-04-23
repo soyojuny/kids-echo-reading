@@ -11,6 +11,7 @@ type ReaderLibraryBook = {
   category: "animal" | "adventure" | "daily" | "science" | "emotion";
   readingLevel: number;
   createdAt: string;
+  coverImageUrl?: string;
 };
 
 type ReaderLibraryClientProps = {
@@ -92,7 +93,8 @@ function toMeta(book: ReaderLibraryBook) {
   return {
     category: book.category,
     level,
-    coverClass: coverIndex === "1" ? styles.cover1 : coverIndex === "2" ? styles.cover2 : styles.cover3,
+    fallbackCoverClass:
+      coverIndex === "1" ? styles.cover1 : coverIndex === "2" ? styles.cover2 : styles.cover3,
     subtitle: `${categoryLabel} · 레벨 ${level} · ${createdDate}`
   };
 }
@@ -272,7 +274,11 @@ export function ReaderLibraryClient({ books, errorMessage }: ReaderLibraryClient
             <div className={styles.bookGrid}>
               {filteredBooks.map((book) => (
                 <Link key={book.id} href={`/session/${book.id}/1`} className={styles.bookCard}>
-                  <div className={`${styles.cover} ${book.meta.coverClass}`} />
+                  {book.coverImageUrl ? (
+                    <img className={styles.coverImage} src={book.coverImageUrl} alt={`${book.title} 표지`} />
+                  ) : (
+                    <div className={`${styles.cover} ${book.meta.fallbackCoverClass}`} />
+                  )}
                   <h3>{book.title}</h3>
                   <p className={styles.bookMeta}>{book.meta.subtitle}</p>
                   {book.author && <p className={styles.bookMeta}>저자: {book.author}</p>}
