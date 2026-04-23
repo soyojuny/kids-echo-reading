@@ -1,14 +1,29 @@
 export function splitSentences(text: string): string[] {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const normalized = text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\f\v]+/g, " ")
+    .trim();
   if (!normalized) {
     return [];
   }
 
-  const matched = normalized
-    .match(/[^.!?。！？\n]+[.!?。！？]?/g)
-    ?.map((sentence) => sentence.trim())
+  const lines = normalized
+    .split(/\n+/)
+    .map((line) => line.trim())
     .filter(Boolean);
-  return matched && matched.length > 0 ? matched : [normalized];
+  if (lines.length === 0) {
+    return [];
+  }
+
+  const sentences = lines.flatMap((line) => {
+    const matched = line
+      .match(/[^.!?。！？]+[.!?。！？]?/g)
+      ?.map((sentence) => sentence.trim())
+      .filter(Boolean);
+    return matched && matched.length > 0 ? matched : [line];
+  });
+
+  return sentences;
 }
 
 export function tokenizeSentence(sentence: string): string[] {

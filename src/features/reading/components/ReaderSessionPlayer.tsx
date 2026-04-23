@@ -147,6 +147,7 @@ export function ReaderSessionPlayer({
 
   const sentenceIndexRef = useRef(0);
   const aiWordIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const aiWordTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const sentenceTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pageTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aiFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -160,6 +161,12 @@ export function ReaderSessionPlayer({
     if (aiWordIntervalRef.current) {
       clearInterval(aiWordIntervalRef.current);
       aiWordIntervalRef.current = null;
+    }
+    if (aiWordTimersRef.current.length > 0) {
+      aiWordTimersRef.current.forEach((timer) => {
+        clearTimeout(timer);
+      });
+      aiWordTimersRef.current = [];
     }
     if (sentenceTransitionTimerRef.current) {
       clearTimeout(sentenceTransitionTimerRef.current);
@@ -223,6 +230,81 @@ export function ReaderSessionPlayer({
     const startMs = Math.max(0, startTiming.startMs - 120);
     const endMs = Math.max(startMs + 450, endTiming.endMs + 220);
     return { startMs, endMs };
+  }
+
+  function getSentenceWordTimings(targetSentenceIndex: number): WordTiming[] | undefined {
+    const range = sentenceWordRanges[targetSentenceIndex];
+    if (!range || range.tokenCount <= 0) {
+      return undefined;
+    }
+
+    const sentenceTimingSlice = wordTimings.slice(range.startWordIndex, range.startWordIndex + range.tokenCount);
+    if (sentenceTimingSlice.length !== range.tokenCount) {
+      return undefined;
+    }
+
+    const hasInvalid = sentenceTimingSlice.some(
+      (timing) =>
+        !Number.isFinite(timing.startMs) ||
+        !Number.isFinite(timing.endMs) ||
+        timing.endMs <= timing.startMs
+    );
+    if (hasInvalid) {
+      return undefined;
+    }
+
+    return sentenceTimingSlice;
+  }
+
+  function startFallbackWordHighlight(tokenCount: number, totalDurationMs: number) {
+    if (tokenCount <= 0) {
+      setActiveWordIndex(-1);
+      return;
+    }
+
+    setActiveWordIndex(0);
+    if (tokenCount === 1) {
+      return;
+    }
+
+    const intervalMs = Math.max(120, Math.floor(totalDurationMs / tokenCount));
+    let indexCursor = 0;
+    aiWordIntervalRef.current = setInterval(() => {
+      indexCursor += 1;
+      if (indexCursor >= tokenCount) {
+        setActiveWordIndex(tokenCount - 1);
+        if (aiWordIntervalRef.current) {
+          clearInterval(aiWordIntervalRef.current);
+          aiWordIntervalRef.current = null;
+        }
+        return;
+      }
+      setActiveWordIndex(indexCursor);
+    }, intervalMs);
+  }
+
+  function startSyncedWordHighlight(targetSentenceIndex: number, segmentStartMs: number): boolean {
+    const sentenceTimingSlice = getSentenceWordTimings(targetSentenceIndex);
+    const tokenCount = sentenceTokens[targetSentenceIndex]?.length ?? 0;
+    if (!sentenceTimingSlice || tokenCount !== sentenceTimingSlice.length) {
+      return false;
+    }
+
+    setActiveWordIndex(-1);
+    sentenceTimingSlice.forEach((timing, index) => {
+      const delayMs = Math.max(0, timing.startMs - segmentStartMs);
+      const timer = setTimeout(() => {
+        setActiveWordIndex(index);
+      }, delayMs);
+      aiWordTimersRef.current.push(timer);
+    });
+
+    const lastTiming = sentenceTimingSlice[sentenceTimingSlice.length - 1];
+    const endTimer = setTimeout(() => {
+      setActiveWordIndex(sentenceTimingSlice.length - 1);
+    }, Math.max(0, lastTiming.endMs - segmentStartMs));
+    aiWordTimersRef.current.push(endTimer);
+    return true;
   }
 
   function playAudioSegment(startMs: number, endMs: number, onFinished: () => void): boolean {
@@ -326,37 +408,38 @@ export function ReaderSessionPlayer({
     sentenceIndexRef.current = targetSentenceIndex;
     setReadingState("ai_playing");
     setStatusMessage("AI가 먼저 읽고 있어요.");
-    setActiveWordIndex(0);
 
     const timingRange = getSentenceTimingRange(targetSentenceIndex);
-    const intervalMs =
-      timingRange && timingRange.endMs > timingRange.startMs
-        ? Math.max(120, Math.floor((timingRange.endMs - timingRange.startMs) / Math.max(tokens.length, 1)))
-        : 240;
-
-    let progressIndex = 0;
-    aiWordIntervalRef.current = setInterval(() => {
-      progressIndex += 1;
-      if (progressIndex >= tokens.length) {
-        setActiveWordIndex(tokens.length - 1);
-        return;
-      }
-      setActiveWordIndex(progressIndex);
-    }, intervalMs);
 
     const onFinished = () => {
       if (aiWordIntervalRef.current) {
         clearInterval(aiWordIntervalRef.current);
         aiWordIntervalRef.current = null;
       }
+      if (aiWordTimersRef.current.length > 0) {
+        aiWordTimersRef.current.forEach((timer) => {
+          clearTimeout(timer);
+        });
+        aiWordTimersRef.current = [];
+      }
       beginChildReading(targetSentenceIndex);
     };
 
     if (timingRange && playAudioSegment(timingRange.startMs, timingRange.endMs, onFinished)) {
+      const synced = startSyncedWordHighlight(targetSentenceIndex, timingRange.startMs);
+      if (!synced) {
+        startFallbackWordHighlight(tokens.length, timingRange.endMs - timingRange.startMs);
+      }
       return;
     }
 
     if (targetSentenceIndex === 0 && playWholeAudio(onFinished)) {
+      const sentenceWordTimings = getSentenceWordTimings(targetSentenceIndex);
+      if (sentenceWordTimings) {
+        startSyncedWordHighlight(targetSentenceIndex, 0);
+      } else {
+        startFallbackWordHighlight(tokens.length, Math.max(1800, sentence.length * 90));
+      }
       return;
     }
 
@@ -373,9 +456,11 @@ export function ReaderSessionPlayer({
       speechUtteranceRef.current = utterance;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
+      startFallbackWordHighlight(tokens.length, Math.max(1800, sentence.length * 90));
       return;
     }
 
+    startFallbackWordHighlight(tokens.length, Math.max(1500, Math.min(5200, sentence.length * 90)));
     aiFallbackTimerRef.current = setTimeout(
       onFinished,
       Math.max(1500, Math.min(5200, sentence.length * 90))
