@@ -42,9 +42,28 @@ type SentenceWordRange = {
   tokenCount: number;
 };
 
-const AUTO_NEXT_SENTENCE_MS = 1800;
-const AUTO_NEXT_PAGE_MS = 3000;
+const AUTO_NEXT_SENTENCE_MS = 1000;
+const AUTO_NEXT_PAGE_MS = 1000;
 const LAST_SESSION_STORAGE_KEY = "kids-echo-reading-last-session";
+
+function resolveActiveWordIndex(wordTimings: WordTiming[], currentAudioMs: number): number {
+  if (wordTimings.length === 0) {
+    return -1;
+  }
+
+  if (currentAudioMs < wordTimings[0].startMs) {
+    return -1;
+  }
+
+  for (let index = 0; index < wordTimings.length; index += 1) {
+    const timing = wordTimings[index];
+    if (currentAudioMs <= timing.endMs) {
+      return index;
+    }
+  }
+
+  return wordTimings.length - 1;
+}
 
 function getOrientationDefaultView(): PageViewMode {
   if (typeof window === "undefined") {
@@ -152,6 +171,7 @@ export function ReaderSessionPlayer({
   const pageTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aiFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const segmentStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const segmentMonitorFrameRef = useRef<number | null>(null);
   const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const segmentAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -184,6 +204,10 @@ export function ReaderSessionPlayer({
       clearTimeout(segmentStopTimerRef.current);
       segmentStopTimerRef.current = null;
     }
+    if (segmentMonitorFrameRef.current !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(segmentMonitorFrameRef.current);
+      segmentMonitorFrameRef.current = null;
+    }
   }
 
   function stopSpeech() {
@@ -199,7 +223,14 @@ export function ReaderSessionPlayer({
     if (!audio) {
       return;
     }
+    if (segmentMonitorFrameRef.current !== null && typeof window !== "undefined") {
+      window.cancelAnimationFrame(segmentMonitorFrameRef.current);
+      segmentMonitorFrameRef.current = null;
+    }
     audio.pause();
+    audio.onended = null;
+    audio.onerror = null;
+    audio.onloadedmetadata = null;
     audio.src = "";
     segmentAudioRef.current = null;
   }
@@ -227,8 +258,14 @@ export function ReaderSessionPlayer({
       return undefined;
     }
 
-    const startMs = Math.max(0, startTiming.startMs - 120);
-    const endMs = Math.max(startMs + 450, endTiming.endMs + 220);
+    const nextTiming = wordTimings[range.endWordIndex + 1];
+    const startMs = Math.max(0, startTiming.startMs - 80);
+    const paddedEndMs = endTiming.endMs + 90;
+    const boundedEndMs =
+      nextTiming && Number.isFinite(nextTiming.startMs)
+        ? Math.min(paddedEndMs, Math.max(endTiming.endMs + 30, nextTiming.startMs - 40))
+        : paddedEndMs;
+    const endMs = Math.max(startMs + 320, boundedEndMs);
     return { startMs, endMs };
   }
 
@@ -307,7 +344,12 @@ export function ReaderSessionPlayer({
     return true;
   }
 
-  function playAudioSegment(startMs: number, endMs: number, onFinished: () => void): boolean {
+  function playAudioSegment(
+    startMs: number,
+    endMs: number,
+    onFinished: () => void,
+    onProgress?: (currentAudioMs: number) => void
+  ): boolean {
     if (!audioUrl) {
       return false;
     }
@@ -337,7 +379,29 @@ export function ReaderSessionPlayer({
       audio.currentTime = clampedStart;
       void audio.play()
         .then(() => {
-          const stopMs = Math.max(300, (endSec - clampedStart) * 1000);
+          const stopAtSec = Math.max(clampedStart + 0.12, endSec - 0.03);
+          const monitor = () => {
+            if (finished || segmentAudioRef.current !== audio) {
+              return;
+            }
+
+            const currentAudioMs = Math.max(0, Math.round(audio.currentTime * 1000));
+            onProgress?.(currentAudioMs);
+            if (audio.currentTime >= stopAtSec) {
+              finishOnce();
+              return;
+            }
+
+            if (typeof window !== "undefined") {
+              segmentMonitorFrameRef.current = window.requestAnimationFrame(monitor);
+            }
+          };
+
+          if (typeof window !== "undefined") {
+            segmentMonitorFrameRef.current = window.requestAnimationFrame(monitor);
+          }
+
+          const stopMs = Math.max(240, (endSec - clampedStart) * 1000 + 120);
           segmentStopTimerRef.current = setTimeout(() => {
             finishOnce();
           }, stopMs);
@@ -410,6 +474,7 @@ export function ReaderSessionPlayer({
     setStatusMessage("AI가 먼저 읽고 있어요.");
 
     const timingRange = getSentenceTimingRange(targetSentenceIndex);
+    const sentenceWordTimings = getSentenceWordTimings(targetSentenceIndex);
 
     const onFinished = () => {
       if (aiWordIntervalRef.current) {
@@ -425,16 +490,23 @@ export function ReaderSessionPlayer({
       beginChildReading(targetSentenceIndex);
     };
 
-    if (timingRange && playAudioSegment(timingRange.startMs, timingRange.endMs, onFinished)) {
-      const synced = startSyncedWordHighlight(targetSentenceIndex, timingRange.startMs);
-      if (!synced) {
+    if (
+      timingRange &&
+      playAudioSegment(timingRange.startMs, timingRange.endMs, onFinished, (currentAudioMs) => {
+        if (!sentenceWordTimings) {
+          return;
+        }
+        const nextIndex = resolveActiveWordIndex(sentenceWordTimings, currentAudioMs);
+        setActiveWordIndex((previous) => (previous === nextIndex ? previous : nextIndex));
+      })
+    ) {
+      if (!sentenceWordTimings) {
         startFallbackWordHighlight(tokens.length, timingRange.endMs - timingRange.startMs);
       }
       return;
     }
 
     if (targetSentenceIndex === 0 && playWholeAudio(onFinished)) {
-      const sentenceWordTimings = getSentenceWordTimings(targetSentenceIndex);
       if (sentenceWordTimings) {
         startSyncedWordHighlight(targetSentenceIndex, 0);
       } else {
@@ -467,9 +539,13 @@ export function ReaderSessionPlayer({
     );
   }
 
-  function finalizePage() {
+  function finalizePage(immediate = false) {
     stopAllAutomation();
     if (nextPageNumber) {
+      if (immediate) {
+        router.push(`/session/${bookId}/${nextPageNumber}`);
+        return;
+      }
       setReadingState("page_transition_wait");
       setStatusMessage(`${AUTO_NEXT_PAGE_MS / 1000}초 후 다음 페이지로 이동합니다.`);
       pageTransitionTimerRef.current = setTimeout(() => {
@@ -495,7 +571,7 @@ export function ReaderSessionPlayer({
       return;
     }
 
-    finalizePage();
+    finalizePage(manualOverride);
   }
 
   function completeChildReading() {
@@ -747,13 +823,6 @@ export function ReaderSessionPlayer({
                 다른 책 고르기
               </Link>
             </div>
-          </section>
-        )}
-
-        {audioUrl && (
-          <section className={`${styles.card} ${styles.resultCard}`}>
-            <p className={styles.subtitle}>TTS 미리듣기</p>
-            <audio controls src={audioUrl} style={{ width: "100%" }} />
           </section>
         )}
 
