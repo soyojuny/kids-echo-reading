@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { WordTiming } from "@/shared/types/WordTiming";
-import { splitSentences, tokenizeSentence } from "@/shared/utils/textSegmentation";
+import { normalizeToken, splitSentences, tokenizeSentence } from "@/shared/utils/textSegmentation";
 import styles from "@/features/reading/components/ChildReadingUi.module.css";
 
 type PageViewMode = "single" | "spread";
@@ -42,9 +42,158 @@ type SentenceWordRange = {
   tokenCount: number;
 };
 
+type LocalWordState = "correct" | "partial" | "missed" | "wrong" | "inserted";
+
+type LocalAssessmentWord = {
+  index: number;
+  referenceWord: string;
+  state: LocalWordState;
+  recognizedText?: string;
+};
+
+type BrowserSpeechRecognitionResult = {
+  isFinal?: boolean;
+  0?: {
+    transcript?: string;
+  };
+};
+
+type BrowserSpeechRecognitionEvent = {
+  results?: ArrayLike<BrowserSpeechRecognitionResult>;
+};
+
+type BrowserSpeechRecognitionErrorEvent = {
+  error?: string;
+  message?: string;
+};
+
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
 const AUTO_NEXT_SENTENCE_MS = 1000;
 const AUTO_NEXT_PAGE_MS = 1000;
 const LAST_SESSION_STORAGE_KEY = "kids-echo-reading-last-session";
+
+function getSpeechRecognitionConstructor(): (new () => BrowserSpeechRecognition) | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  const host = window as Window & {
+    SpeechRecognition?: new () => BrowserSpeechRecognition;
+    webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+  };
+  return host.SpeechRecognition ?? host.webkitSpeechRecognition;
+}
+
+function isPartialWordMatch(reference: string, recognized: string): boolean {
+  if (!reference || !recognized) {
+    return false;
+  }
+  if (reference === recognized) {
+    return true;
+  }
+
+  const minLength = Math.min(reference.length, recognized.length);
+  if (minLength < 4) {
+    return false;
+  }
+
+  return reference.includes(recognized) || recognized.includes(reference);
+}
+
+function assessLocalPronunciation(referenceTokens: string[], recognizedText: string): LocalAssessmentWord[] {
+  const recognizedTokens = tokenizeSentence(recognizedText);
+  const normalizedRecognized = recognizedTokens.map((token) => normalizeToken(token));
+  const normalizedReference = referenceTokens.map((token) => normalizeToken(token));
+  const assessed: LocalAssessmentWord[] = [];
+
+  let referenceIndex = 0;
+  let recognizedIndex = 0;
+
+  while (referenceIndex < referenceTokens.length && recognizedIndex < recognizedTokens.length) {
+    const referenceWord = referenceTokens[referenceIndex];
+    const recognizedWord = recognizedTokens[recognizedIndex];
+    const normalizedRef = normalizedReference[referenceIndex];
+    const normalizedRecognizedWord = normalizedRecognized[recognizedIndex];
+
+    if (normalizedRef && normalizedRef === normalizedRecognizedWord) {
+      assessed.push({
+        index: referenceIndex,
+        referenceWord,
+        recognizedText: recognizedWord,
+        state: "correct"
+      });
+      referenceIndex += 1;
+      recognizedIndex += 1;
+      continue;
+    }
+
+    const nextRecognized = normalizedRecognized[recognizedIndex + 1];
+    if (nextRecognized && nextRecognized === normalizedRef) {
+      assessed.push({
+        index: assessed.length,
+        referenceWord: recognizedWord,
+        recognizedText: recognizedWord,
+        state: "inserted"
+      });
+      recognizedIndex += 1;
+      continue;
+    }
+
+    const nextReference = normalizedReference[referenceIndex + 1];
+    if (nextReference && nextReference === normalizedRecognizedWord) {
+      assessed.push({
+        index: referenceIndex,
+        referenceWord,
+        state: "missed"
+      });
+      referenceIndex += 1;
+      continue;
+    }
+
+    assessed.push({
+      index: referenceIndex,
+      referenceWord,
+      recognizedText: recognizedWord,
+      state: isPartialWordMatch(normalizedRef, normalizedRecognizedWord) ? "partial" : "wrong"
+    });
+    referenceIndex += 1;
+    recognizedIndex += 1;
+  }
+
+  while (referenceIndex < referenceTokens.length) {
+    assessed.push({
+      index: referenceIndex,
+      referenceWord: referenceTokens[referenceIndex],
+      state: "missed"
+    });
+    referenceIndex += 1;
+  }
+
+  while (recognizedIndex < recognizedTokens.length) {
+    const recognizedWord = recognizedTokens[recognizedIndex];
+    assessed.push({
+      index: assessed.length,
+      referenceWord: recognizedWord,
+      recognizedText: recognizedWord,
+      state: "inserted"
+    });
+    recognizedIndex += 1;
+  }
+
+  return assessed;
+}
 
 function resolveActiveWordIndex(wordTimings: WordTiming[], currentAudioMs: number): number {
   if (wordTimings.length === 0) {
@@ -163,6 +312,10 @@ export function ReaderSessionPlayer({
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
   const [pageViewMode, setPageViewMode] = useState<PageViewMode>("single");
   const [manualViewMode, setManualViewMode] = useState(false);
+  const [speechRecognitionSupported, setSpeechRecognitionSupported] = useState(false);
+  const [isRecognizing, setIsRecognizing] = useState(false);
+  const [recognizedTranscript, setRecognizedTranscript] = useState("");
+  const [assessmentWords, setAssessmentWords] = useState<LocalAssessmentWord[]>([]);
 
   const sentenceIndexRef = useRef(0);
   const aiWordIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -174,6 +327,7 @@ export function ReaderSessionPlayer({
   const segmentMonitorFrameRef = useRef<number | null>(null);
   const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const segmentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
 
   const currentTokens = sentenceTokens[sentenceIndex] ?? [];
 
@@ -235,10 +389,29 @@ export function ReaderSessionPlayer({
     segmentAudioRef.current = null;
   }
 
+  function stopSpeechRecognition() {
+    const recognition = speechRecognitionRef.current;
+    if (!recognition) {
+      return;
+    }
+
+    recognition.onresult = null;
+    recognition.onerror = null;
+    recognition.onend = null;
+    try {
+      recognition.abort();
+    } catch {
+      // Ignore abort errors while recognition has not started yet.
+    }
+    speechRecognitionRef.current = null;
+    setIsRecognizing(false);
+  }
+
   function stopAllAutomation() {
     clearFlowTimers();
     stopSpeech();
     stopSegmentAudio();
+    stopSpeechRecognition();
     setActiveWordIndex(-1);
   }
 
@@ -456,8 +629,100 @@ export function ReaderSessionPlayer({
     setSentenceIndex(targetSentenceIndex);
     sentenceIndexRef.current = targetSentenceIndex;
     setActiveWordIndex(-1);
+    setRecognizedTranscript("");
+    setAssessmentWords([]);
     setReadingState("child_reading");
-    setStatusMessage("아이 차례예요. 문장을 따라 읽고 완료 버튼을 눌러 주세요.");
+    setStatusMessage("아이 차례예요. 문장을 읽고 완료 버튼을 눌러 주세요.");
+  }
+
+  function beginSpeechRecognitionAssessment(targetSentenceIndex: number, onFinished: () => void) {
+    if (isRecognizing) {
+      return;
+    }
+
+    const RecognitionConstructor = getSpeechRecognitionConstructor();
+    if (!RecognitionConstructor) {
+      setStatusMessage("이 브라우저는 음성 인식을 지원하지 않습니다.");
+      return;
+    }
+
+    const referenceTokens = sentenceTokens[targetSentenceIndex] ?? [];
+    if (referenceTokens.length === 0) {
+      setStatusMessage("평가할 문장이 없습니다.");
+      return;
+    }
+
+    setRecognizedTranscript("");
+    setAssessmentWords([]);
+    setIsRecognizing(true);
+
+    const recognition = new RecognitionConstructor();
+    speechRecognitionRef.current = recognition;
+    recognition.lang = "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    let latestTranscript = "";
+    let hadError = false;
+
+    recognition.onresult = (event) => {
+      const results = event.results;
+      if (!results) {
+        return;
+      }
+
+      let merged = "";
+      for (let index = 0; index < results.length; index += 1) {
+        const transcript = results[index]?.[0]?.transcript;
+        if (typeof transcript === "string" && transcript.trim()) {
+          merged += `${transcript.trim()} `;
+        }
+      }
+      latestTranscript = merged.trim();
+      if (latestTranscript) {
+        setRecognizedTranscript(latestTranscript);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      hadError = true;
+      setStatusMessage(
+        `음성 인식에 실패했습니다${event.error ? ` (${event.error})` : ""}. 다시 시도해 주세요.`
+      );
+    };
+
+    recognition.onend = () => {
+      speechRecognitionRef.current = null;
+      setIsRecognizing(false);
+
+      if (hadError) {
+        return;
+      }
+
+      if (!latestTranscript) {
+        setStatusMessage("음성이 인식되지 않았습니다. 다시 시도해 주세요.");
+        return;
+      }
+
+      const localAssessment = assessLocalPronunciation(referenceTokens, latestTranscript);
+      setAssessmentWords(localAssessment);
+
+      const correctCount = localAssessment.filter((word) => word.state === "correct").length;
+      setStatusMessage(
+        `${correctCount}/${referenceTokens.length} 단어를 정확히 읽었어요. ${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`
+      );
+      onFinished();
+    };
+
+    try {
+      recognition.start();
+      setStatusMessage("음성 인식 중입니다. 문장을 읽어 주세요.");
+    } catch {
+      speechRecognitionRef.current = null;
+      setIsRecognizing(false);
+      setStatusMessage("음성 인식을 시작하지 못했습니다. 다시 시도해 주세요.");
+    }
   }
 
   function beginAiPlaying(targetSentenceIndex: number) {
@@ -578,12 +843,21 @@ export function ReaderSessionPlayer({
     if (readingState !== "child_reading") {
       return;
     }
+    if (!speechRecognitionSupported) {
+      setStatusMessage("이 브라우저는 음성 인식을 지원하지 않습니다.");
+      return;
+    }
+    if (isRecognizing) {
+      setStatusMessage("음성 인식이 진행 중입니다. 잠시만 기다려 주세요.");
+      return;
+    }
 
-    setReadingState("sentence_done");
-    setStatusMessage(`좋아요. ${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`);
-    sentenceTransitionTimerRef.current = setTimeout(() => {
-      goNextSentenceOrPage(false);
-    }, AUTO_NEXT_SENTENCE_MS);
+    beginSpeechRecognitionAssessment(sentenceIndexRef.current, () => {
+      setReadingState("sentence_done");
+      sentenceTransitionTimerRef.current = setTimeout(() => {
+        goNextSentenceOrPage(false);
+      }, AUTO_NEXT_SENTENCE_MS);
+    });
   }
 
   function goPrevSentence() {
@@ -611,6 +885,10 @@ export function ReaderSessionPlayer({
   useEffect(() => {
     sentenceIndexRef.current = sentenceIndex;
   }, [sentenceIndex]);
+
+  useEffect(() => {
+    setSpeechRecognitionSupported(Boolean(getSpeechRecognitionConstructor()));
+  }, []);
 
   useEffect(() => {
     const applyByOrientation = () => {
@@ -782,9 +1060,9 @@ export function ReaderSessionPlayer({
                 type="button"
                 className={`${styles.btn} ${styles.btnSoft}`}
                 onClick={completeChildReading}
-                disabled={readingState !== "child_reading"}
+                disabled={readingState !== "child_reading" || !speechRecognitionSupported || isRecognizing}
               >
-                따라 읽기 완료
+                {isRecognizing ? "음성 인식 중..." : "따라 읽기 완료"}
               </button>
             </div>
 
@@ -808,6 +1086,36 @@ export function ReaderSessionPlayer({
             </div>
 
             <p className={styles.statusLine}>{statusMessage}</p>
+
+            {!speechRecognitionSupported && (
+              <div className={styles.errorBox}>
+                이 브라우저는 Web Speech API를 지원하지 않아 음성 인식을 사용할 수 없습니다.
+              </div>
+            )}
+
+            {recognizedTranscript && (
+              <div className={styles.pageReview}>
+                <p className={styles.subtitle}>인식된 문장</p>
+                <p style={{ margin: "8px 0 0" }}>{recognizedTranscript}</p>
+              </div>
+            )}
+
+            {assessmentWords.length > 0 && (
+              <div className={styles.pageReview}>
+                <p className={styles.subtitle}>단어 평가</p>
+                <ul className={styles.reviewList}>
+                  {assessmentWords.map((word, index) => (
+                    <li key={`${word.referenceWord}-${index}`} className={styles.reviewWord}>
+                      {word.state === "correct" ? "정확" : ""}
+                      {word.state === "partial" ? "부분" : ""}
+                      {word.state === "missed" ? "누락" : ""}
+                      {word.state === "wrong" ? "오류" : ""}
+                      {word.state === "inserted" ? "추가" : ""}: {word.referenceWord}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </section>
         )}
 
