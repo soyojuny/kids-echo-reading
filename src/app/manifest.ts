@@ -5,9 +5,9 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Kids Echo Reading",
     short_name: "Echo Reading",
     description: "Tablet-first echo reading training app for children.",
-    start_url: "/",
+    start_url: "/library",
     display: "standalone",
-    orientation: "landscape",
+    orientation: "any",
     background_color: "#f6f9ff",
     theme_color: "#164b9f",
     icons: [

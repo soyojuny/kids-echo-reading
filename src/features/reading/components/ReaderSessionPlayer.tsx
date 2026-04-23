@@ -56,6 +56,20 @@ const AUTO_NEXT_PAGE_MS = 5000;
 const RETRY_PROMPT_MS = 900;
 const MAX_RETRY_COUNT = 1;
 const REVIEW_STORAGE_PREFIX = "kids-echo-reading-review";
+const LAST_SESSION_STORAGE_KEY = "kids-echo-reading-last-session";
+
+type LastSessionSnapshot = {
+  bookId: string;
+  bookTitle: string;
+  pageNumber: number;
+  totalPages: number;
+  updatedAt: number;
+};
+
+type PrecacheMessage = {
+  type: "PRECACHE_URLS";
+  payload: string[];
+};
 
 function getOrientationDefaultView(): PageViewMode {
   if (typeof window === "undefined") {
@@ -66,6 +80,42 @@ function getOrientationDefaultView(): PageViewMode {
 
 function buildReviewStorageKey(bookId: string): string {
   return `${REVIEW_STORAGE_PREFIX}:${bookId}`;
+}
+
+function saveLastSessionSnapshot(snapshot: LastSessionSnapshot) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(LAST_SESSION_STORAGE_KEY, JSON.stringify(snapshot));
+}
+
+function postPrecacheMessage(urls: string[]) {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    return;
+  }
+
+  const dedupedUrls = [...new Set(urls.filter((url) => typeof url === "string" && url.length > 0))];
+  if (dedupedUrls.length === 0) {
+    return;
+  }
+
+  const message: PrecacheMessage = {
+    type: "PRECACHE_URLS",
+    payload: dedupedUrls
+  };
+
+  if (navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage(message);
+    return;
+  }
+
+  void navigator.serviceWorker.ready
+    .then((registration) => {
+      registration.active?.postMessage(message);
+    })
+    .catch(() => {
+      // Ignore pre-cache warmup failures.
+    });
 }
 
 function loadReviewMap(bookId: string): Record<string, number> {
@@ -761,6 +811,20 @@ export function ReaderSessionPlayer({
       window.removeEventListener("resize", onResize);
     };
   }, [manualViewMode]);
+
+  useEffect(() => {
+    saveLastSessionSnapshot({
+      bookId,
+      bookTitle,
+      pageNumber,
+      totalPages,
+      updatedAt: Date.now()
+    });
+  }, [bookId, bookTitle, pageNumber, totalPages]);
+
+  useEffect(() => {
+    postPrecacheMessage([imageUrl, nextPageImageUrl ?? "", audioUrl ?? ""]);
+  }, [imageUrl, nextPageImageUrl, audioUrl]);
 
   useEffect(() => {
     stopAllAutomation();

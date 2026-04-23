@@ -1,6 +1,6 @@
 # Kids Echo Reading Development Schedule
 
-Last Updated: `2026-04-22`
+Last Updated: `2026-04-23`
 Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 
 ## Overall Phase Plan
@@ -12,7 +12,7 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 | Phase 3 | TTS와 하이라이트 | In Progress | TTS 프리셋, 오디오 생성, 하이라이트 |
 | Phase 4 | 아동 읽기 CX 정렬 (문서/데모 기준) | In Progress | 문장 루프 상태머신, 페이지 복습, 최종 추천 복습, 방향별 1/2페이지 |
 | Phase 5 | 따라읽기 평가 연동 | In Progress | 녹음 업로드, Azure 평가, 단어별 결과 |
-| Phase 6 | 태블릿 UX/PWA 강화 | Pending | 설치성/캐시/이어보기 강화 |
+| Phase 6 | 태블릿 UX/PWA 강화 | In Progress | 설치성/캐시/이어보기 강화 |
 | Phase 7 | 입력 자동화 확장 | Pending | OCR 초안 생성 + 검수 UI |
 
 ## Detailed Task Board
@@ -64,10 +64,10 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 
 ### Phase 6. 태블릿 UX/PWA 강화
 
-- [ ] landscape/portrait 기본 정책 반영
-- [ ] 홈 화면 설치성 점검
-- [ ] 현재/다음 페이지 자산 프리캐시
-- [ ] 마지막 읽던 책 이어보기
+- [x] `2026-04-23` landscape/portrait 기본 정책 반영(매니페스트 orientation 완화 + 리더 기본 정책 유지)
+- [x] `2026-04-23` 홈 화면 설치성 점검(설치 프롬프트 UI 노출 및 설치 트리거 처리)
+- [x] `2026-04-23` 현재/다음 페이지 자산 프리캐시(서비스워커 message + 캐시 전략)
+- [x] `2026-04-23` 마지막 읽던 책 이어보기(localStorage 저장 + 라이브러리 이어읽기 CTA)
 
 ### Phase 7. 입력 자동화 확장
 
@@ -89,3 +89,4 @@ Source Of Truth: `plan.md`, `CLAUD.md`, `doc/INDEX.md`
 - `2026-04-21`: Phase 3 TTS 프리셋/생성 API/오디오 저장/리더 하이라이트 1차 구현
 - `2026-04-22`: Phase 4 아동 읽기 CX 정렬(문장 루프 상태머신, 페이지 복습, 최종 추천 복습, 방향별 1/2페이지) 1차 구현
 - `2026-04-22`: Phase 5 따라읽기 평가 연동(녹음 업로드, Azure 평가 API, reading_attempts/word_assessments 저장, 단어 피드백 UI) 1차 구현
+- `2026-04-23`: Phase 6 태블릿 UX/PWA 강화 1차 구현(설치 프롬프트, 자산 프리캐시, 이어읽기, 터치 타깃 확대)
