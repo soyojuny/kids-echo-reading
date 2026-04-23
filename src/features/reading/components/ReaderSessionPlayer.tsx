@@ -3,10 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type {
-  SentenceAssessmentResponse,
-  SentenceAssessmentWord
-} from "@/features/assessment/types/AssessmentTypes";
 import type { WordTiming } from "@/shared/types/WordTiming";
 import { splitSentences, tokenizeSentence } from "@/shared/utils/textSegmentation";
 import styles from "@/features/reading/components/ChildReadingUi.module.css";
@@ -15,12 +11,10 @@ type PageViewMode = "single" | "spread";
 type ReadingState =
   | "idle"
   | "ai_playing"
-  | "child_recording"
-  | "sentence_retry_prompt"
+  | "child_reading"
   | "sentence_done"
-  | "page_review"
   | "page_transition_wait"
-  | "final_review";
+  | "completed";
 
 type ReaderSessionPlayerProps = {
   bookTitle: string;
@@ -37,39 +31,20 @@ type ReaderSessionPlayerProps = {
   nextPageNumber?: number;
 };
 
-type ReviewEntry = {
-  word: string;
-  count: number;
-};
-
-type RecordingState = "idle" | "recording" | "processing";
-
-type LastAssessment = {
-  provider: "azure";
-  score: SentenceAssessmentResponse["score"];
-  words: SentenceAssessmentWord[];
-  feedback: SentenceAssessmentResponse["feedback"];
-};
-
-const AUTO_NEXT_SENTENCE_MS = 2000;
-const AUTO_NEXT_PAGE_MS = 5000;
-const RETRY_PROMPT_MS = 900;
-const MAX_RETRY_COUNT = 1;
-const REVIEW_STORAGE_PREFIX = "kids-echo-reading-review";
-const LAST_SESSION_STORAGE_KEY = "kids-echo-reading-last-session";
-
-type LastSessionSnapshot = {
-  bookId: string;
-  bookTitle: string;
-  pageNumber: number;
-  totalPages: number;
-  updatedAt: number;
-};
-
 type PrecacheMessage = {
   type: "PRECACHE_URLS";
   payload: string[];
 };
+
+type SentenceWordRange = {
+  startWordIndex: number;
+  endWordIndex: number;
+  tokenCount: number;
+};
+
+const AUTO_NEXT_SENTENCE_MS = 1800;
+const AUTO_NEXT_PAGE_MS = 3000;
+const LAST_SESSION_STORAGE_KEY = "kids-echo-reading-last-session";
 
 function getOrientationDefaultView(): PageViewMode {
   if (typeof window === "undefined") {
@@ -78,11 +53,13 @@ function getOrientationDefaultView(): PageViewMode {
   return window.matchMedia("(orientation: landscape)").matches ? "spread" : "single";
 }
 
-function buildReviewStorageKey(bookId: string): string {
-  return `${REVIEW_STORAGE_PREFIX}:${bookId}`;
-}
-
-function saveLastSessionSnapshot(snapshot: LastSessionSnapshot) {
+function saveLastSessionSnapshot(snapshot: {
+  bookId: string;
+  bookTitle: string;
+  pageNumber: number;
+  totalPages: number;
+  updatedAt: number;
+}) {
   if (typeof window === "undefined") {
     return;
   }
@@ -118,156 +95,15 @@ function postPrecacheMessage(urls: string[]) {
     });
 }
 
-function loadReviewMap(bookId: string): Record<string, number> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-
-  const raw = window.localStorage.getItem(buildReviewStorageKey(bookId));
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const next: Record<string, number> = {};
-    for (const [word, count] of Object.entries(parsed)) {
-      if (typeof count === "number" && Number.isFinite(count) && count > 0) {
-        next[word] = Math.floor(count);
-      }
-    }
-    return next;
-  } catch {
-    return {};
-  }
-}
-
-function saveReviewMap(bookId: string, reviewMap: Record<string, number>) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.localStorage.setItem(buildReviewStorageKey(bookId), JSON.stringify(reviewMap));
-}
-
-function toSortedReviewEntries(reviewMap: Record<string, number>): ReviewEntry[] {
-  return Object.entries(reviewMap)
-    .sort((a, b) => b[1] - a[1])
-    .map(([word, count]) => ({ word, count }));
-}
-
-function mergeChannelsToMono(audioBuffer: AudioBuffer): Float32Array {
-  const { numberOfChannels, length } = audioBuffer;
-  const mono = new Float32Array(length);
-  for (let channel = 0; channel < numberOfChannels; channel += 1) {
-    const data = audioBuffer.getChannelData(channel);
-    for (let index = 0; index < length; index += 1) {
-      mono[index] += data[index] / numberOfChannels;
-    }
-  }
-  return mono;
-}
-
-function downsampleBuffer(source: Float32Array, sampleRate: number, targetRate: number): Float32Array {
-  if (targetRate >= sampleRate) {
-    return source;
-  }
-
-  const ratio = sampleRate / targetRate;
-  const targetLength = Math.floor(source.length / ratio);
-  const result = new Float32Array(targetLength);
-
-  for (let index = 0; index < targetLength; index += 1) {
-    const sourceStart = Math.floor(index * ratio);
-    const sourceEnd = Math.min(source.length, Math.floor((index + 1) * ratio));
-    let sum = 0;
-    let count = 0;
-
-    for (let sourceIndex = sourceStart; sourceIndex < sourceEnd; sourceIndex += 1) {
-      sum += source[sourceIndex];
-      count += 1;
-    }
-
-    result[index] = count > 0 ? sum / count : 0;
-  }
-
-  return result;
-}
-
-function encodePcm16Wav(samples: Float32Array, sampleRate: number): ArrayBuffer {
-  const bytesPerSample = 2;
-  const blockAlign = bytesPerSample;
-  const byteRate = sampleRate * blockAlign;
-  const dataSize = samples.length * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  let offset = 0;
-  const writeString = (value: string) => {
-    for (let index = 0; index < value.length; index += 1) {
-      view.setUint8(offset + index, value.charCodeAt(index));
-    }
-    offset += value.length;
-  };
-
-  writeString("RIFF");
-  view.setUint32(offset, 36 + dataSize, true);
-  offset += 4;
-  writeString("WAVE");
-  writeString("fmt ");
-  view.setUint32(offset, 16, true);
-  offset += 4;
-  view.setUint16(offset, 1, true);
-  offset += 2;
-  view.setUint16(offset, 1, true);
-  offset += 2;
-  view.setUint32(offset, sampleRate, true);
-  offset += 4;
-  view.setUint32(offset, byteRate, true);
-  offset += 4;
-  view.setUint16(offset, blockAlign, true);
-  offset += 2;
-  view.setUint16(offset, 16, true);
-  offset += 2;
-  writeString("data");
-  view.setUint32(offset, dataSize, true);
-  offset += 4;
-
-  for (let index = 0; index < samples.length; index += 1) {
-    const sample = Math.max(-1, Math.min(1, samples[index]));
-    const pcm = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-    view.setInt16(offset, pcm, true);
-    offset += 2;
-  }
-
-  return buffer;
-}
-
-async function convertToMonoWavBlob(source: Blob, targetSampleRate = 16000): Promise<Blob> {
-  const audioContext = new AudioContext();
-  try {
-    const sourceBuffer = await source.arrayBuffer();
-    const decoded = await audioContext.decodeAudioData(sourceBuffer);
-    const mono = mergeChannelsToMono(decoded);
-    const downsampled = downsampleBuffer(mono, decoded.sampleRate, targetSampleRate);
-    const wavBuffer = encodePcm16Wav(downsampled, targetSampleRate);
-    return new Blob([wavBuffer], { type: "audio/wav" });
-  } finally {
-    await audioContext.close();
-  }
-}
-
 function getSentenceBoxClassName(readingState: ReadingState): string {
   if (readingState === "ai_playing") {
     return `${styles.sentenceBox} ${styles.statePlay}`;
   }
-  if (readingState === "child_recording") {
+  if (readingState === "child_reading") {
     return `${styles.sentenceBox} ${styles.stateRecord}`;
   }
-  if (readingState === "sentence_done" || readingState === "page_transition_wait") {
+  if (readingState === "sentence_done" || readingState === "page_transition_wait" || readingState === "completed") {
     return `${styles.sentenceBox} ${styles.stateDone}`;
-  }
-  if (readingState === "sentence_retry_prompt" || readingState === "page_review") {
-    return `${styles.sentenceBox} ${styles.stateFail}`;
   }
   return `${styles.sentenceBox} ${styles.stateIdle}`;
 }
@@ -275,7 +111,6 @@ function getSentenceBoxClassName(readingState: ReadingState): string {
 export function ReaderSessionPlayer({
   bookTitle,
   bookId,
-  pageId,
   pageNumber,
   totalPages,
   imageUrl,
@@ -292,47 +127,39 @@ export function ReaderSessionPlayer({
     () => sentences.map((sentence) => tokenizeSentence(sentence)),
     [sentences]
   );
+  const sentenceWordRanges = useMemo<SentenceWordRange[]>(() => {
+    let cursor = 0;
+    return sentenceTokens.map((tokens) => {
+      const tokenCount = tokens.length;
+      const startWordIndex = cursor;
+      const endWordIndex = cursor + Math.max(0, tokenCount - 1);
+      cursor += tokenCount;
+      return { startWordIndex, endWordIndex, tokenCount };
+    });
+  }, [sentenceTokens]);
 
   const [readingState, setReadingState] = useState<ReadingState>("idle");
   const [statusMessage, setStatusMessage] = useState("준비 완료");
   const [sentenceIndex, setSentenceIndex] = useState(0);
-  const [masteredBySentence, setMasteredBySentence] = useState<boolean[][]>([]);
-  const [attemptCounts, setAttemptCounts] = useState<number[]>([]);
-  const [selectedWordIndexes, setSelectedWordIndexes] = useState<number[]>([]);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
-  const [recordingState, setRecordingState] = useState<RecordingState>("idle");
-  const [recordingError, setRecordingError] = useState<string>();
-  const [sessionId, setSessionId] = useState<string>();
-  const [lastAssessment, setLastAssessment] = useState<LastAssessment | null>(null);
-  const [pageReviewWords, setPageReviewWords] = useState<string[]>([]);
-  const [finalReviewWords, setFinalReviewWords] = useState<ReviewEntry[]>([]);
   const [pageViewMode, setPageViewMode] = useState<PageViewMode>("single");
   const [manualViewMode, setManualViewMode] = useState(false);
 
   const sentenceIndexRef = useRef(0);
-  const masteredBySentenceRef = useRef<boolean[][]>([]);
-  const pageReviewDoneRef = useRef(false);
   const aiWordIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const retryPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sentenceTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pageTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aiFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const segmentStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const recordingChunksRef = useRef<Blob[]>([]);
+  const segmentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const currentTokens = sentenceTokens[sentenceIndex] ?? [];
-  const currentMastered = masteredBySentence[sentenceIndex] ?? [];
 
   function clearFlowTimers() {
     if (aiWordIntervalRef.current) {
       clearInterval(aiWordIntervalRef.current);
       aiWordIntervalRef.current = null;
-    }
-    if (retryPromptTimerRef.current) {
-      clearTimeout(retryPromptTimerRef.current);
-      retryPromptTimerRef.current = null;
     }
     if (sentenceTransitionTimerRef.current) {
       clearTimeout(sentenceTransitionTimerRef.current);
@@ -346,6 +173,10 @@ export function ReaderSessionPlayer({
       clearTimeout(aiFallbackTimerRef.current);
       aiFallbackTimerRef.current = null;
     }
+    if (segmentStopTimerRef.current) {
+      clearTimeout(segmentStopTimerRef.current);
+      segmentStopTimerRef.current = null;
+    }
   }
 
   function stopSpeech() {
@@ -356,123 +187,131 @@ export function ReaderSessionPlayer({
     speechUtteranceRef.current = null;
   }
 
-  function stopRecordingStream() {
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
+  function stopSegmentAudio() {
+    const audio = segmentAudioRef.current;
+    if (!audio) {
+      return;
     }
-    mediaRecorderRef.current = null;
-
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => {
-        track.stop();
-      });
-      mediaStreamRef.current = null;
-    }
-    recordingChunksRef.current = [];
-    setRecordingState("idle");
+    audio.pause();
+    audio.src = "";
+    segmentAudioRef.current = null;
   }
 
   function stopAllAutomation() {
     clearFlowTimers();
     stopSpeech();
-    stopRecordingStream();
+    stopSegmentAudio();
     setActiveWordIndex(-1);
   }
 
-  async function startRecordingCapture() {
-    if (typeof window === "undefined" || typeof navigator === "undefined") {
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setRecordingError("현재 브라우저는 마이크 녹음을 지원하지 않습니다.");
-      return;
-    }
-    if (mediaRecorderRef.current || recordingState === "recording" || recordingState === "processing") {
-      return;
+  function getSentenceTimingRange(targetSentenceIndex: number): { startMs: number; endMs: number } | undefined {
+    const range = sentenceWordRanges[targetSentenceIndex];
+    if (!range || range.tokenCount <= 0) {
+      return undefined;
     }
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-
-      const mimeCandidates = [
-        "audio/webm;codecs=opus",
-        "audio/webm",
-        "audio/ogg;codecs=opus",
-        "audio/mp4"
-      ];
-      const supported = mimeCandidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
-      const recorder = supported ? new MediaRecorder(stream, { mimeType: supported }) : new MediaRecorder(stream);
-
-      recordingChunksRef.current = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          recordingChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setRecordingError(undefined);
-      setRecordingState("recording");
-      setStatusMessage("녹음 중이에요. 문장을 끝까지 읽은 뒤 채점 버튼을 눌러주세요.");
-    } catch (error) {
-      setRecordingState("idle");
-      setRecordingError(error instanceof Error ? error.message : "마이크 접근에 실패했습니다.");
+    const startTiming = wordTimings[range.startWordIndex];
+    const endTiming = wordTimings[range.endWordIndex];
+    if (!startTiming || !endTiming) {
+      return undefined;
     }
+
+    if (!Number.isFinite(startTiming.startMs) || !Number.isFinite(endTiming.endMs)) {
+      return undefined;
+    }
+
+    const startMs = Math.max(0, startTiming.startMs - 120);
+    const endMs = Math.max(startMs + 450, endTiming.endMs + 220);
+    return { startMs, endMs };
   }
 
-  function getRemainingWordIndexes(targetSentenceIndex: number, matrix: boolean[][]): number[] {
-    const row = matrix[targetSentenceIndex] ?? [];
-    return row
-      .map((isMastered, idx) => ({ isMastered, idx }))
-      .filter((item) => !item.isMastered)
-      .map((item) => item.idx);
+  function playAudioSegment(startMs: number, endMs: number, onFinished: () => void): boolean {
+    if (!audioUrl) {
+      return false;
+    }
+
+    let finished = false;
+    const finishOnce = () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      stopSegmentAudio();
+      onFinished();
+    };
+
+    const audio = new Audio(audioUrl);
+    segmentAudioRef.current = audio;
+
+    audio.onloadedmetadata = () => {
+      const startSec = Math.max(0, startMs / 1000);
+      const endSec = Math.max(startSec + 0.25, endMs / 1000);
+
+      const clampedStart =
+        Number.isFinite(audio.duration) && audio.duration > 0
+          ? Math.min(startSec, Math.max(0, audio.duration - 0.05))
+          : startSec;
+
+      audio.currentTime = clampedStart;
+      void audio.play()
+        .then(() => {
+          const stopMs = Math.max(300, (endSec - clampedStart) * 1000);
+          segmentStopTimerRef.current = setTimeout(() => {
+            finishOnce();
+          }, stopMs);
+        })
+        .catch(() => {
+          finishOnce();
+        });
+    };
+
+    audio.onended = () => {
+      finishOnce();
+    };
+    audio.onerror = () => {
+      finishOnce();
+    };
+
+    audio.load();
+    return true;
   }
 
-  function getPageUnmasteredWords(matrix: boolean[][]): string[] {
-    const words: string[] = [];
-    matrix.forEach((row, sIdx) => {
-      row.forEach((isMastered, tIdx) => {
-        if (!isMastered) {
-          const token = sentenceTokens[sIdx]?.[tIdx];
-          if (token) {
-            words.push(token);
-          }
-        }
-      });
+  function playWholeAudio(onFinished: () => void): boolean {
+    if (!audioUrl) {
+      return false;
+    }
+
+    let finished = false;
+    const finishOnce = () => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      stopSegmentAudio();
+      onFinished();
+    };
+
+    const audio = new Audio(audioUrl);
+    segmentAudioRef.current = audio;
+    audio.onended = () => {
+      finishOnce();
+    };
+    audio.onerror = () => {
+      finishOnce();
+    };
+
+    void audio.play().catch(() => {
+      finishOnce();
     });
-    return [...new Set(words)];
+    return true;
   }
 
-  function addReviewWords(words: string[]) {
-    if (!words.length) {
-      return;
-    }
-    const reviewMap = loadReviewMap(bookId);
-    words.forEach((word) => {
-      reviewMap[word] = (reviewMap[word] ?? 0) + 1;
-    });
-    saveReviewMap(bookId, reviewMap);
-  }
-
-  function prepareFinalReview(currentUnmasteredWords: string[]) {
-    addReviewWords(currentUnmasteredWords);
-    const reviewMap = loadReviewMap(bookId);
-    setFinalReviewWords(toSortedReviewEntries(reviewMap).slice(0, 8));
-  }
-
-  function beginChildRecording(targetSentenceIndex: number) {
+  function beginChildReading(targetSentenceIndex: number) {
     setSentenceIndex(targetSentenceIndex);
     sentenceIndexRef.current = targetSentenceIndex;
-    setSelectedWordIndexes([]);
-    setLastAssessment(null);
     setActiveWordIndex(-1);
-    setReadingState("child_recording");
-    setRecordingError(undefined);
-    setStatusMessage("자동 진행: 문장 전체를 따라 읽어보자.");
-    void startRecordingCapture();
+    setReadingState("child_reading");
+    setStatusMessage("아이 차례예요. 문장을 따라 읽고 완료 버튼을 눌러 주세요.");
   }
 
   function beginAiPlaying(targetSentenceIndex: number) {
@@ -485,10 +324,15 @@ export function ReaderSessionPlayer({
     stopAllAutomation();
     setSentenceIndex(targetSentenceIndex);
     sentenceIndexRef.current = targetSentenceIndex;
-    setSelectedWordIndexes([]);
     setReadingState("ai_playing");
-    setStatusMessage("자동 진행: 문장 전체를 먼저 들어보자.");
+    setStatusMessage("AI가 먼저 읽고 있어요.");
     setActiveWordIndex(0);
+
+    const timingRange = getSentenceTimingRange(targetSentenceIndex);
+    const intervalMs =
+      timingRange && timingRange.endMs > timingRange.startMs
+        ? Math.max(120, Math.floor((timingRange.endMs - timingRange.startMs) / Math.max(tokens.length, 1)))
+        : 240;
 
     let progressIndex = 0;
     aiWordIntervalRef.current = setInterval(() => {
@@ -498,15 +342,23 @@ export function ReaderSessionPlayer({
         return;
       }
       setActiveWordIndex(progressIndex);
-    }, 240);
+    }, intervalMs);
 
     const onFinished = () => {
       if (aiWordIntervalRef.current) {
         clearInterval(aiWordIntervalRef.current);
         aiWordIntervalRef.current = null;
       }
-      beginChildRecording(targetSentenceIndex);
+      beginChildReading(targetSentenceIndex);
     };
+
+    if (timingRange && playAudioSegment(timingRange.startMs, timingRange.endMs, onFinished)) {
+      return;
+    }
+
+    if (targetSentenceIndex === 0 && playWholeAudio(onFinished)) {
+      return;
+    }
 
     if (
       typeof window !== "undefined" &&
@@ -514,7 +366,7 @@ export function ReaderSessionPlayer({
       typeof SpeechSynthesisUtterance !== "undefined"
     ) {
       const utterance = new SpeechSynthesisUtterance(sentence);
-      utterance.lang = "ko-KR";
+      utterance.lang = "en-US";
       utterance.rate = 0.95;
       utterance.onend = onFinished;
       utterance.onerror = onFinished;
@@ -526,126 +378,13 @@ export function ReaderSessionPlayer({
 
     aiFallbackTimerRef.current = setTimeout(
       onFinished,
-      Math.max(1600, Math.min(5200, sentence.length * 95))
+      Math.max(1500, Math.min(5200, sentence.length * 90))
     );
   }
 
-  async function assessRecordedSentence(audioBlob: Blob) {
-    const currentSentence = sentenceIndexRef.current;
-    const sentence = sentences[currentSentence] ?? "";
-
-    setRecordingState("processing");
-    setRecordingError(undefined);
-    setStatusMessage("채점 중입니다. 잠시만 기다려주세요.");
-
-    try {
-      const wavBlob = await convertToMonoWavBlob(audioBlob);
-      const formData = new FormData();
-      formData.set("audio", new File([wavBlob], `reading-${Date.now()}.wav`, { type: "audio/wav" }));
-      formData.set("sentenceIndex", String(currentSentence));
-      formData.set("sentenceText", sentence);
-      formData.set("locale", "en-US");
-      if (sessionId) {
-        formData.set("sessionId", sessionId);
-      }
-
-      const response = await fetch(`/api/reader/books/${bookId}/pages/${pageId}/assessment`, {
-        method: "POST",
-        body: formData
-      });
-      const payload = (await response.json()) as
-        | SentenceAssessmentResponse
-        | {
-            error?: string;
-          };
-
-      if (!response.ok || !("words" in payload)) {
-        throw new Error(("error" in payload ? payload.error : undefined) ?? "채점 요청에 실패했습니다.");
-      }
-
-      setSessionId(payload.sessionId);
-      setLastAssessment({
-        provider: payload.provider,
-        score: payload.score,
-        words: payload.words,
-        feedback: payload.feedback
-      });
-
-      const autoMatchedIndexes = payload.words
-        .filter((word) => word.state === "correct" || word.state === "partial")
-        .map((word) => word.index)
-        .filter((index) => Number.isInteger(index) && index >= 0);
-
-      setSelectedWordIndexes(autoMatchedIndexes);
-      completeChildRecording(autoMatchedIndexes, payload.feedback.message);
-      setRecordingState("idle");
-    } catch (error) {
-      setRecordingState("idle");
-      setRecordingError(error instanceof Error ? error.message : "채점에 실패했습니다.");
-      setStatusMessage("채점 실패. 단어를 수동 선택 후 완료할 수 있어요.");
-    }
-  }
-
-  async function stopRecordingAndAssess() {
-    if (readingState !== "child_recording") {
-      return;
-    }
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state !== "recording") {
-      setStatusMessage("녹음이 시작되지 않았어요. 먼저 녹음 시작 버튼을 눌러주세요.");
-      return;
-    }
-
-    const stoppedBlob = await new Promise<Blob>((resolve, reject) => {
-      recorder.addEventListener(
-        "stop",
-        () => {
-          const blob = new Blob(recordingChunksRef.current, {
-            type: recorder.mimeType || "audio/webm"
-          });
-          resolve(blob);
-        },
-        { once: true }
-      );
-      recorder.addEventListener(
-        "error",
-        () => {
-          reject(new Error("녹음 중 오류가 발생했습니다."));
-        },
-        { once: true }
-      );
-      recorder.stop();
-    });
-
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => {
-        track.stop();
-      });
-      mediaStreamRef.current = null;
-    }
-    mediaRecorderRef.current = null;
-
-    if (stoppedBlob.size === 0) {
-      setRecordingState("idle");
-      setRecordingError("녹음 데이터가 비어 있습니다. 다시 시도해주세요.");
-      return;
-    }
-
-    await assessRecordedSentence(stoppedBlob);
-  }
-
-  function finalizePage(targetMatrix: boolean[][]) {
-    const unmasteredWords = getPageUnmasteredWords(targetMatrix);
-
-    if (unmasteredWords.length > 0 && !pageReviewDoneRef.current) {
-      setPageReviewWords(unmasteredWords);
-      setReadingState("page_review");
-      setStatusMessage("페이지 마무리 전에 남은 단어를 한 번 더 해보자.");
-      return;
-    }
-
+  function finalizePage() {
+    stopAllAutomation();
     if (nextPageNumber) {
-      addReviewWords(unmasteredWords);
       setReadingState("page_transition_wait");
       setStatusMessage(`${AUTO_NEXT_PAGE_MS / 1000}초 후 다음 페이지로 이동합니다.`);
       pageTransitionTimerRef.current = setTimeout(() => {
@@ -654,78 +393,35 @@ export function ReaderSessionPlayer({
       return;
     }
 
-    prepareFinalReview(unmasteredWords);
-    setReadingState("final_review");
-    setStatusMessage("자주 어려웠던 단어를 먼저 복습해보자.");
+    setReadingState("completed");
+    setStatusMessage("이 책의 읽기를 모두 마쳤어요.");
   }
 
-  function goNextSentenceOrPage(manualOverride = false, matrixInput?: boolean[][]) {
+  function goNextSentenceOrPage(manualOverride = false) {
     stopAllAutomation();
-    const matrix = matrixInput ?? masteredBySentenceRef.current;
     const currentSentence = sentenceIndexRef.current;
 
     if (currentSentence < sentenceTokens.length - 1) {
       const nextSentence = currentSentence + 1;
-      setSentenceIndex(nextSentence);
-      sentenceIndexRef.current = nextSentence;
       if (manualOverride) {
-        setStatusMessage("다음 문장으로 이동했어요.");
+        setStatusMessage("다음 문장으로 이동합니다.");
       }
       beginAiPlaying(nextSentence);
       return;
     }
 
-    finalizePage(matrix);
+    finalizePage();
   }
 
-  function completeChildRecording(
-    selectedIndexesOverride?: number[],
-    successMessageOverride?: string
-  ) {
-    if (readingState !== "child_recording") {
-      return;
-    }
-
-    stopRecordingStream();
-    const currentSentence = sentenceIndexRef.current;
-    const nextAttempt = (attemptCounts[currentSentence] ?? 0) + 1;
-    const nextAttemptCounts = [...attemptCounts];
-    nextAttemptCounts[currentSentence] = nextAttempt;
-    setAttemptCounts(nextAttemptCounts);
-
-    const nextMatrix = masteredBySentence.map((row) => [...row]);
-    const selectedIndexes = selectedIndexesOverride ?? selectedWordIndexes;
-    selectedIndexes.forEach((wordIndex) => {
-      if (nextMatrix[currentSentence] && typeof nextMatrix[currentSentence][wordIndex] === "boolean") {
-        nextMatrix[currentSentence][wordIndex] = true;
-      }
-    });
-
-    masteredBySentenceRef.current = nextMatrix;
-    setMasteredBySentence(nextMatrix);
-    setSelectedWordIndexes([]);
-
-    const remainingIndexes = getRemainingWordIndexes(currentSentence, nextMatrix);
-    if (remainingIndexes.length > 0 && nextAttempt <= MAX_RETRY_COUNT) {
-      setReadingState("sentence_retry_prompt");
-      setStatusMessage(successMessageOverride ?? "이 단어 한 번 더 해볼까?");
-      retryPromptTimerRef.current = setTimeout(() => {
-        beginAiPlaying(currentSentence);
-      }, RETRY_PROMPT_MS);
+  function completeChildReading() {
+    if (readingState !== "child_reading") {
       return;
     }
 
     setReadingState("sentence_done");
-    if (remainingIndexes.length > 0) {
-      setStatusMessage(successMessageOverride ?? "남은 단어는 페이지 끝에서 다시 해보자.");
-    } else {
-      setStatusMessage(
-        successMessageOverride ?? `잘 읽었어요. ${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`
-      );
-    }
-
+    setStatusMessage(`좋아요. ${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`);
     sentenceTransitionTimerRef.current = setTimeout(() => {
-      goNextSentenceOrPage(false, nextMatrix);
+      goNextSentenceOrPage(false);
     }, AUTO_NEXT_SENTENCE_MS);
   }
 
@@ -737,65 +433,23 @@ export function ReaderSessionPlayer({
     const prevSentence = sentenceIndex - 1;
     setSentenceIndex(prevSentence);
     sentenceIndexRef.current = prevSentence;
-    setStatusMessage("이전 문장으로 이동했어요.");
+    setStatusMessage("이전 문장으로 이동했습니다.");
     beginAiPlaying(prevSentence);
   }
 
   function handleStop() {
     stopAllAutomation();
     setReadingState("idle");
-    setStatusMessage("자동 진행이 중지되었습니다.");
+    setStatusMessage("자동 진행을 멈췄습니다.");
   }
 
-  function startPageReviewRetry() {
-    pageReviewDoneRef.current = true;
-    const matrix = masteredBySentenceRef.current;
-    const retrySentence = matrix.findIndex((row) => row.some((isMastered) => !isMastered));
-    if (retrySentence < 0) {
-      finalizePage(matrix);
-      return;
-    }
-    setPageReviewWords([]);
-    setSentenceIndex(retrySentence);
-    sentenceIndexRef.current = retrySentence;
-    setStatusMessage("좋아, 남은 단어부터 다시 해보자.");
-    beginAiPlaying(retrySentence);
-  }
-
-  function skipPageReview() {
-    pageReviewDoneRef.current = true;
-    setPageReviewWords([]);
-    finalizePage(masteredBySentenceRef.current);
-  }
-
-  function toggleWordSelection(wordIndex: number) {
-    if (readingState !== "child_recording") {
-      return;
-    }
-    if (currentMastered[wordIndex]) {
-      return;
-    }
-    setSelectedWordIndexes((previous) =>
-      previous.includes(wordIndex)
-        ? previous.filter((value) => value !== wordIndex)
-        : [...previous, wordIndex]
-    );
-  }
-
-  function resetFinalReviewAndRestart() {
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(buildReviewStorageKey(bookId));
-    }
+  function restartCurrentBook() {
     router.push(`/session/${bookId}/1`);
   }
 
   useEffect(() => {
     sentenceIndexRef.current = sentenceIndex;
   }, [sentenceIndex]);
-
-  useEffect(() => {
-    masteredBySentenceRef.current = masteredBySentence;
-  }, [masteredBySentence]);
 
   useEffect(() => {
     const applyByOrientation = () => {
@@ -828,20 +482,9 @@ export function ReaderSessionPlayer({
 
   useEffect(() => {
     stopAllAutomation();
-    pageReviewDoneRef.current = false;
-    setPageReviewWords([]);
-    setFinalReviewWords([]);
-    setLastAssessment(null);
-    setRecordingError(undefined);
-    setRecordingState("idle");
-
-    const initialMastered = sentenceTokens.map((tokens) => tokens.map(() => false));
-    setMasteredBySentence(initialMastered);
-    masteredBySentenceRef.current = initialMastered;
-    setAttemptCounts(sentenceTokens.map(() => 0));
-    setSelectedWordIndexes([]);
     setSentenceIndex(0);
     sentenceIndexRef.current = 0;
+    setActiveWordIndex(-1);
 
     if (sentenceTokens.length === 0) {
       setReadingState("idle");
@@ -854,7 +497,7 @@ export function ReaderSessionPlayer({
 
     const startTimer = setTimeout(() => {
       beginAiPlaying(0);
-    }, 100);
+    }, 120);
 
     return () => {
       clearTimeout(startTimer);
@@ -882,19 +525,20 @@ export function ReaderSessionPlayer({
             <p className={styles.subtitle}>아동용 읽기 연습 CX 화면</p>
           </div>
           <span className={styles.chip}>
-            {readingState === "final_review" ? "복습 추천 완료" : `문장 ${sentenceIndex + 1}/${sentences.length || 0}`}
+            {readingState === "completed" ? "완료" : `문장 ${sentenceIndex + 1}/${sentences.length || 0}`}
           </span>
         </header>
 
-        {readingState !== "final_review" && (
+        {readingState !== "completed" && (
           <section className={styles.card}>
             <h2>{readingTitle}</h2>
             <p className={styles.subtitle}>
               페이지 {pageNumber} / {totalPages || "?"}
             </p>
+
             <div className={styles.readingToolbar}>
               <p className={styles.subtitle}>
-                현재: {pageViewMode === "spread" ? "두 페이지 보기" : "한 페이지 보기"}
+                현재: {pageViewMode === "spread" ? "2페이지 보기" : "1페이지 보기"}
               </p>
               <div className={styles.viewToggle}>
                 <button
@@ -948,24 +592,14 @@ export function ReaderSessionPlayer({
               <p className={styles.script}>
                 {currentTokens.length === 0 && <span className={styles.scriptToken}>문장이 없습니다.</span>}
                 {currentTokens.map((token, index) => {
-                  const filled =
-                    currentMastered[index] ||
-                    selectedWordIndexes.includes(index) ||
-                    (readingState === "ai_playing" && activeWordIndex === index);
+                  const active = readingState === "ai_playing" && activeWordIndex === index;
                   return (
-                    <button
+                    <span
                       key={`${sentenceIndex}-${index}-${token}`}
-                      type="button"
-                      className={`${styles.scriptToken} ${filled ? styles.tokenFilled : ""}`}
-                      onClick={() => toggleWordSelection(index)}
-                      disabled={
-                        readingState !== "child_recording" ||
-                        currentMastered[index] ||
-                        recordingState === "processing"
-                      }
+                      className={`${styles.scriptToken} ${active ? styles.tokenFilled : ""}`}
                     >
                       {token}
-                    </button>
+                    </span>
                   );
                 })}
               </p>
@@ -978,22 +612,18 @@ export function ReaderSessionPlayer({
               <button
                 type="button"
                 className={`${styles.btn} ${styles.btnSoft}`}
-                onClick={recordingState === "recording" ? stopRecordingAndAssess : startRecordingCapture}
-                disabled={readingState !== "child_recording" || recordingState === "processing"}
+                onClick={() => beginAiPlaying(sentenceIndex)}
+                disabled={readingState === "page_transition_wait"}
               >
-                {recordingState === "recording"
-                  ? "녹음 종료 + 채점"
-                  : recordingState === "processing"
-                    ? "채점 중..."
-                    : "녹음 시작"}
+                현재 문장 다시 듣기
               </button>
               <button
                 type="button"
                 className={`${styles.btn} ${styles.btnSoft}`}
-                onClick={() => completeChildRecording()}
-                disabled={readingState !== "child_recording" || recordingState === "processing"}
+                onClick={completeChildReading}
+                disabled={readingState !== "child_reading"}
               >
-                수동 완료
+                따라 읽기 완료
               </button>
             </div>
 
@@ -1017,88 +647,19 @@ export function ReaderSessionPlayer({
             </div>
 
             <p className={styles.statusLine}>{statusMessage}</p>
-            {recordingError && <p className={styles.statusLine}>마이크/채점 오류: {recordingError}</p>}
-
-            {lastAssessment && (
-              <div className={styles.pageReview}>
-                <strong>
-                  단어 채점 결과 · 정답 {lastAssessment.feedback.goodWords}/{lastAssessment.words.length}
-                </strong>
-                <p className={styles.subtitle} style={{ marginTop: 6 }}>
-                  {lastAssessment.feedback.message}
-                </p>
-                <p className={styles.subtitle} style={{ marginTop: 6 }}>
-                  점수: 정확도 {Math.round(lastAssessment.score.accuracyScore ?? 0)} / 유창성{" "}
-                  {Math.round(lastAssessment.score.fluencyScore ?? 0)} / 완성도{" "}
-                  {Math.round(lastAssessment.score.completenessScore ?? 0)}
-                </p>
-                <ul className={styles.reviewList}>
-                  {lastAssessment.words.map((word) => (
-                    <li key={`assessment-word-${word.index}-${word.referenceWord}`} className={styles.reviewWord}>
-                      {word.referenceWord} · {word.state}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {readingState === "page_review" && (
-              <div className={styles.pageReview}>
-                <strong>이 단어 한 번 더 해볼까?</strong>
-                <ul className={styles.reviewList}>
-                  {pageReviewWords.map((word) => (
-                    <li key={`review-${word}`} className={styles.reviewWord}>
-                      {word}
-                    </li>
-                  ))}
-                </ul>
-                <div className={styles.controls}>
-                  <button
-                    type="button"
-                    className={`${styles.btn} ${styles.btnSoft}`}
-                    onClick={startPageReviewRetry}
-                  >
-                    다시 해보기
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.btn} ${styles.btnSoft}`}
-                    onClick={skipPageReview}
-                  >
-                    다음 페이지로
-                  </button>
-                </div>
-              </div>
-            )}
           </section>
         )}
 
-        {readingState === "final_review" && (
+        {readingState === "completed" && (
           <section className={`${styles.card} ${styles.resultCard}`}>
-            <h2>AI 추천 복습</h2>
-            <p className={styles.subtitle}>
-              {finalReviewWords.length === 0
-                ? "오늘은 추천 복습 단어가 없어요. 정말 잘했어요!"
-                : "자주 어려웠던 단어를 먼저 복습해보자."}
-            </p>
-            <ul className={styles.reviewList}>
-              {finalReviewWords.length === 0 && <li className={styles.reviewWord}>모든 단어 안정적</li>}
-              {finalReviewWords.map((entry) => (
-                <li key={`final-${entry.word}`} className={styles.reviewWord}>
-                  {entry.word} · 추천 {entry.count}회
-                </li>
-              ))}
-            </ul>
+            <h2>읽기 완료</h2>
+            <p className={styles.subtitle}>평가 기능은 잠시 제외하고, 읽기 흐름 중심으로 진행합니다.</p>
             <div className={styles.controls}>
-              <button
-                type="button"
-                className={`${styles.btn} ${styles.btnSoft}`}
-                onClick={resetFinalReviewAndRestart}
-              >
-                추천 단어 다시 읽기
+              <button type="button" className={`${styles.btn} ${styles.btnSoft}`} onClick={restartCurrentBook}>
+                처음부터 다시 읽기
               </button>
               <Link href="/library" className={`${styles.btn} ${styles.btnSoft}`}>
-                다음 책 보기
+                다른 책 고르기
               </Link>
             </div>
           </section>
@@ -1117,23 +678,23 @@ export function ReaderSessionPlayer({
           </Link>
           <span
             className={`${styles.footerNavItem} ${
-              readingState === "final_review" ? "" : styles.footerNavActive
+              readingState === "completed" ? "" : styles.footerNavActive
             }`}
           >
             2. 읽기 연습
           </span>
           <span
             className={`${styles.footerNavItem} ${
-              readingState === "final_review" ? styles.footerNavActive : ""
+              readingState === "completed" ? styles.footerNavActive : ""
             }`}
           >
             3. 결과 보기
           </span>
         </nav>
 
-        {wordTimings.length === 0 && (
+        {!audioUrl && (
           <div className={styles.errorBox}>
-            이 페이지는 단어 타이밍 메타데이터가 없어 문장 루프 중심으로 안내합니다.
+            이 페이지에는 TTS 오디오가 없어 브라우저 음성으로 대체 재생합니다.
           </div>
         )}
       </div>

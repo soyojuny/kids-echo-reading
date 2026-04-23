@@ -42,26 +42,24 @@ function shouldUseEdgeOnCurrentRuntime(): boolean {
 export async function synthesizePageTts(input: SynthesizePageTtsInput): Promise<SynthesizePageTtsResult> {
   const configuredProvider = readConfiguredProvider();
 
-  if (configuredProvider === "edge" && shouldUseEdgeOnCurrentRuntime()) {
-    try {
-      const edgeResult = await synthesizeEdgePageTts({
-        text: input.text,
-        voiceName: input.voiceName,
-        speakingRate: input.speakingRate,
-        sentencePauseLevel: input.sentencePauseLevel
-      });
-
-      return {
-        ...edgeResult,
-        provider: "edge",
-        contentType: "audio/mpeg",
-        extension: "mp3"
-      };
-    } catch (error) {
-      console.error("Edge TTS failed and fallback synthesis will be used.", error);
+  if (configuredProvider === "edge") {
+    if (!shouldUseEdgeOnCurrentRuntime()) {
+      throw new Error("Edge TTS is disabled in this runtime.");
     }
-  } else if (configuredProvider === "edge") {
-    console.warn("Edge TTS is disabled in this runtime. Falling back to local synthesis.");
+
+    const edgeResult = await synthesizeEdgePageTts({
+      text: input.text,
+      voiceName: input.voiceName,
+      speakingRate: input.speakingRate,
+      sentencePauseLevel: input.sentencePauseLevel
+    });
+
+    return {
+      ...edgeResult,
+      provider: "edge",
+      contentType: "audio/mpeg",
+      extension: "mp3"
+    };
   }
 
   const fallbackResult = synthesizeFallbackPageTts({

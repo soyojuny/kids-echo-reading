@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { PageTtsTimingJson } from "@/features/tts/types/PageTtsAsset";
 import type { SentencePauseLevel } from "@/features/tts/types/TtsProfile";
-import { estimateFallbackTiming } from "@/server/tts/fallbackSynthesis";
+import type { WordTiming } from "@/shared/types/WordTiming";
 
 // `ws` optional native addons can fail to load in some local runtimes.
 // Force pure JS path to avoid `bufferUtil.mask is not a function`.
@@ -53,8 +53,16 @@ type EdgeSynthesisResult = {
 };
 
 type SubtitleCue = {
+  part: string;
   start: number;
   end: number;
+};
+
+type TimedToken = {
+  text: string;
+  normalized: string;
+  startMs: number;
+  endMs: number;
 };
 
 const LEGACY_VOICE_MAP: Record<string, string> = {
@@ -153,6 +161,159 @@ function parseSubtitleDurationMs(raw: string): number | undefined {
   }
 }
 
+function normalizeTokenForMatch(token: string): string {
+  return token
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}'-]+/gu, "")
+    .trim();
+}
+
+function tokenizeByWhitespace(text: string): string[] {
+  return text
+    .trim()
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function parseSubtitleCues(raw: string): SubtitleCue[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((item) => {
+        if (typeof item !== "object" || item === null) {
+          return undefined;
+        }
+        const row = item as Record<string, unknown>;
+        const part = typeof row.part === "string" ? row.part : "";
+        const start = typeof row.start === "number" ? row.start : Number(row.start);
+        const end = typeof row.end === "number" ? row.end : Number(row.end);
+
+        if (!part.trim() || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+          return undefined;
+        }
+        return {
+          part,
+          start: Math.max(0, Math.round(start)),
+          end: Math.max(0, Math.round(end))
+        } satisfies SubtitleCue;
+      })
+      .filter((cue): cue is SubtitleCue => Boolean(cue))
+      .sort((a, b) => a.start - b.start);
+  } catch {
+    return [];
+  }
+}
+
+function expandCuesToTimedTokens(cues: SubtitleCue[]): TimedToken[] {
+  const expanded: TimedToken[] = [];
+  for (const cue of cues) {
+    const cueTokens = tokenizeByWhitespace(cue.part);
+    if (cueTokens.length === 0) {
+      continue;
+    }
+
+    if (cueTokens.length === 1) {
+      const normalized = normalizeTokenForMatch(cueTokens[0]);
+      expanded.push({
+        text: cueTokens[0],
+        normalized,
+        startMs: cue.start,
+        endMs: cue.end
+      });
+      continue;
+    }
+
+    const weighted = cueTokens.map((token) => ({
+      token,
+      weight: Math.max(1, normalizeTokenForMatch(token).length)
+    }));
+    const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
+    const totalDuration = Math.max(1, cue.end - cue.start);
+
+    let cursor = cue.start;
+    weighted.forEach((item, index) => {
+      const isLast = index === weighted.length - 1;
+      const slice = isLast
+        ? cue.end - cursor
+        : Math.max(1, Math.round((totalDuration * item.weight) / totalWeight));
+      const endMs = isLast ? cue.end : Math.min(cue.end, cursor + slice);
+      expanded.push({
+        text: item.token,
+        normalized: normalizeTokenForMatch(item.token),
+        startMs: cursor,
+        endMs
+      });
+      cursor = endMs;
+    });
+  }
+  return expanded;
+}
+
+function buildWordTimingsFromSubtitles(text: string, cues: SubtitleCue[]): WordTiming[] | undefined {
+  const sourceTokens = tokenizeByWhitespace(text);
+  if (sourceTokens.length === 0) {
+    return [];
+  }
+
+  const timedTokens = expandCuesToTimedTokens(cues);
+  if (timedTokens.length === 0) {
+    return undefined;
+  }
+
+  const wordTimings: WordTiming[] = [];
+  let timedCursor = 0;
+  let previousEnd = 0;
+  let exactMatchCount = 0;
+
+  sourceTokens.forEach((token, index) => {
+    const normalizedSource = normalizeTokenForMatch(token);
+
+    let matchIndex = -1;
+    if (normalizedSource) {
+      const lookaheadEnd = Math.min(timedTokens.length, timedCursor + 8);
+      for (let probe = timedCursor; probe < lookaheadEnd; probe += 1) {
+        if (timedTokens[probe].normalized === normalizedSource) {
+          matchIndex = probe;
+          break;
+        }
+      }
+    }
+
+    if (matchIndex >= 0) {
+      exactMatchCount += 1;
+    }
+
+    const candidateIndex =
+      matchIndex >= 0 ? matchIndex : Math.min(timedCursor, Math.max(0, timedTokens.length - 1));
+    const candidate = timedTokens[candidateIndex];
+
+    const startMs = Math.max(previousEnd, candidate?.startMs ?? previousEnd);
+    const endMs = Math.max(startMs + 60, candidate?.endMs ?? startMs + 220);
+
+    wordTimings.push({
+      index,
+      text: token,
+      startMs,
+      endMs
+    });
+
+    previousEnd = endMs;
+    timedCursor = Math.min(timedTokens.length, candidateIndex + 1);
+  });
+
+  const exactMatchRatio = exactMatchCount / sourceTokens.length;
+  if (exactMatchRatio < 0.45) {
+    return undefined;
+  }
+
+  return wordTimings;
+}
+
 export async function synthesizeEdgePageTts(input: EdgeSynthesisInput): Promise<EdgeSynthesisResult> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "edge-tts-"));
   const audioPath = path.join(tempDir, "page.mp3");
@@ -172,22 +333,35 @@ export async function synthesizeEdgePageTts(input: EdgeSynthesisInput): Promise<
   try {
     await withTimeout(tts.ttsPromise(input.text, audioPath), readHardTimeoutMs());
     const audioBuffer = await readFile(audioPath);
-    const estimatedTiming = estimateFallbackTiming(
-      input.text,
-      input.speakingRate,
-      input.sentencePauseLevel
-    );
 
-    const subtitleDuration = parseSubtitleDurationMs(
-      await readFile(subtitlePath, "utf8").catch(() => "")
-    );
-    const durationMs = Math.max(estimatedTiming.totalDurationMs, subtitleDuration ?? 0);
+    const subtitleRaw = await readFile(subtitlePath, "utf8").catch(() => "");
+    if (!subtitleRaw.trim()) {
+      throw new Error("Edge TTS subtitle metadata is missing.");
+    }
+
+    const subtitleCues = parseSubtitleCues(subtitleRaw);
+    if (subtitleCues.length === 0) {
+      throw new Error("Edge TTS returned empty subtitle metadata.");
+    }
+
+    const subtitleDuration = parseSubtitleDurationMs(subtitleRaw);
+    const edgeWordTimings = buildWordTimingsFromSubtitles(input.text, subtitleCues);
+    if (!edgeWordTimings || edgeWordTimings.length === 0) {
+      throw new Error("Failed to map Edge subtitle metadata to word timings.");
+    }
+
+    const wordTimings = edgeWordTimings;
+    const lastWordEndMs = wordTimings.length > 0 ? wordTimings[wordTimings.length - 1].endMs : 0;
+    const durationMs = Math.max(subtitleDuration ?? 0, lastWordEndMs);
+    if (durationMs <= 0) {
+      throw new Error("Failed to calculate Edge TTS duration from metadata.");
+    }
 
     return {
       audioBuffer,
       durationMs,
       timing: {
-        ...estimatedTiming,
+        wordTimings,
         totalDurationMs: durationMs
       }
     };
