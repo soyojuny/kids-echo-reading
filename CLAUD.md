@@ -60,6 +60,13 @@ Kids Echo Reading is a tablet-first PWA for child echo reading.
 - Never add ad-hoc DB states or storage paths without document updates.
 - Update `/doc` immediately when changing critical architecture or state transitions.
 
+## Git Ops Rule
+
+- Standard flow: `git add -A` -> `git commit -m "..."` -> `git push origin <branch>`.
+- If commit/push fails with lock/permission errors (for example `.git/index.lock: Permission denied`), retry with elevated permission in the agent runtime.
+- Warnings about global git ignore access (for example `unable to access .../.config/git/ignore`) are non-blocking unless commit/push exits with failure.
+- Reference: `./doc/git-operations.md` and `./.codex/skills/git-commit-push/SKILL.md`.
+
 ## UI Source Of Truth
 
 - `./doc/ui/child-reading-cx-spec.md`

@@ -15,6 +15,7 @@ All architecture, data, and deployment changes must be reflected here.
 - Deployment and runtime policy: [`deployment.md`](./deployment.md)
 - Project structure conventions: [`project-structure.md`](./project-structure.md)
 - Development workflow: [`development-workflow.md`](./development-workflow.md)
+- Git operation and permission recovery: [`git-operations.md`](./git-operations.md)
 - Supabase setup: [`supabase-setup-guide.md`](./supabase-setup-guide.md)
 
 ## Reading Guide
