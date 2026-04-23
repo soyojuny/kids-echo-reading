@@ -2,144 +2,113 @@
 
 ## Purpose
 
-이 문서는 시스템의 주요 컴포넌트, 책임, 데이터 흐름을 정의한다.  
-구현은 이 문서의 책임 분리를 기준으로 진행한다.
+Define major components, responsibilities, and end-to-end flow contracts.
+Implementation must follow these boundaries and rules.
 
 ## Scope
 
-포함:
+Included:
 
-- 관리자 콘텐츠 등록 플로우
-- 아이 읽기 세션 플로우
-- TTS 생성/저장/재생 구조
-- Azure 발음 평가 연동 구조
-- PWA와 태블릿 우선 UX 제약
+- Admin authoring flow (page text draft/confirm)
+- Page-level TTS generation and replacement lifecycle
+- Reader playback and highlight flow
+- Pronunciation assessment integration
+- PWA/tablet delivery constraints
 
-제외:
+Excluded:
 
-- OCR 자동화 상세 구현
-- 부모 리포트 대시보드
-- 게임화 기능
+- OCR automation details
+- Parent analytics dashboards
+- Gamification layers
 
 ## System Overview
 
-### Client
+### Client (Next.js PWA)
 
-`Next.js` 기반 PWA가 단일 클라이언트다.
+Responsibilities:
 
-주요 책임:
+- Admin UI for book/page authoring
+- Reader UI for playback/highlight/recording
+- Local interaction and rendering
 
-- 관리자 책 등록 UI
-- 아이 읽기 UI
-- 오디오 재생
-- 녹음
-- 하이라이트 렌더링
-- PWA 캐시 동작
+### Application Server (Node runtime)
 
-### Application Server
+Responsibilities:
 
-`Vercel`에 배포되는 서버 로직이 외부 AI 서비스와 `Supabase`를 연결한다.
-
-주요 책임:
-
-- 인증된 관리자 요청 처리
-- 책/페이지 데이터 저장
-- TTS 생성 요청
-- 녹음 업로드 처리
-- Azure 발음 평가 결과 저장
+- API orchestration
+- Supabase data and storage integration
+- TTS generation orchestration
+- Assessment orchestration
 
 ### Data Layer
 
-- 구조화 데이터: `Supabase Postgres`
-- 파일 저장: `Supabase Storage`
+- `Supabase Postgres` for relational state
+- `Supabase Storage` for images/audio/recordings
 
 ### External AI Services
 
-- `Google Cloud TTS Neural2`: 페이지용 사전 생성 음성
-- `Azure Pronunciation Assessment`: 아이 읽기 평가
-- `Google OCR`: 이후 입력 자동화 확장용
+- Edge TTS (`node-edge-tts`) for page audio + timing metadata
+- Azure Pronunciation Assessment for reading evaluation
 
 ## Primary Flows
 
-## 1. 관리자 책 등록
+## 1. Admin Text Authoring
 
-1. 관리자가 책을 생성한다
-2. 페이지 이미지를 여러 장 업로드한다
-3. 시스템이 파일명 기준으로 정렬한다
-4. 관리자가 페이지 텍스트를 입력하거나 전체 텍스트를 붙여넣는다
-5. 관리자가 페이지 텍스트를 확정한다
-6. 시스템이 TTS를 생성하고 저장한다
+1. Admin uploads page images.
+2. Admin edits page text.
+3. Admin saves temporary text (`input_status=draft`) or confirms text (`input_status=ready`).
+4. System writes a new `page_text_versions` current row when text is saved.
 
-## 2. 아이 읽기 세션
+## 2. Page TTS Generation
 
-1. 아이가 책과 페이지를 연다
-2. 저장된 TTS 오디오를 재생한다
-3. 화면 텍스트를 timepoint 기준으로 하이라이트한다
-4. 아이가 페이지를 따라 읽는다
-5. 녹음을 서버로 전송한다
-6. Azure 발음 평가를 수행한다
-7. 단어 상태와 페이지 결과를 저장한다
-8. UI가 단어별 결과를 표시한다
+1. Generation request is accepted only if:
+   - `input_status=ready`
+   - `confirmed_text` is non-empty
+2. System resolves TTS profile (request override -> page override -> book default -> parent default).
+3. System synthesizes Edge TTS for full page text.
+4. System uploads audio to `book-audio`.
+5. System inserts `page_tts_assets(status=ready)` with timing metadata.
+6. System removes prior ready assets for that page to keep one active ready asset.
 
-## 3. TTS 프리셋 적용
+## 3. Reader Playback Session
 
-1. 부모 기본 TTS 프리셋을 선택한다
-2. 책은 기본적으로 부모 프리셋을 상속한다
-3. 필요 시 책별 override를 설정한다
-4. 텍스트 또는 프리셋이 바뀌면 해당 페이지 TTS만 재생성한다
+1. Reader opens page.
+2. System loads page image/text and latest ready TTS asset.
+3. Reader plays saved audio.
+4. UI highlights text using stored word timing metadata.
+5. Child records reading.
+6. Recording is uploaded for assessment.
 
-## Component Boundaries
+## 4. Pronunciation Assessment
 
-### Admin Surface
+1. Server reads confirmed text/current token context.
+2. Server calls Azure assessment.
+3. Server maps output to internal word states.
+4. Server stores `reading_attempts` and `word_assessments`.
 
-책 등록과 편집 전용 화면이다.
+## Runtime Rules
 
-필수 기능:
-
-- 다중 페이지 업로드
-- 페이지 순서 정렬
-- 페이지별 텍스트 입력
-- 전체 텍스트 붙여넣기
-- TTS 프리셋 선택
-- TTS 샘플 미리듣기
-
-### Reading Surface
-
-아이 학습 전용 화면이다.
-
-필수 기능:
-
-- 한 페이지 또는 두 페이지 보기
-- 현재 단어 하이라이트
-- 재생, 다시 듣기, 녹음
-- 단어별 결과 표시
-
-## AI Service Allocation
-
-- OCR은 현재 핵심 플로우가 아니다
-- TTS는 `Google Neural2`를 기본 엔진으로 쓴다
-- 발음 평가는 `Azure Pronunciation Assessment`를 사용한다
-- 동일 역할의 중복 엔진은 도입하지 않는다
+- Provider selection is env-driven via `TTS_PROVIDER`.
+- Allowed provider values: `edge`, `google`, `azure`.
+- Current runtime implementation is `edge` only.
 
 ## Invariants
 
-- 수동 입력이 현재 콘텐츠 등록의 기준 플로우다
-- 페이지 텍스트가 확정되기 전에는 정식 TTS 자산을 만들지 않는다
-- 읽기 화면은 저장된 오디오만 우선 사용한다
-- 책별 TTS override는 optional이며 기본은 부모 공통 프리셋이다
-- 하이라이트는 텍스트 렌더링용 토큰과 TTS timing 데이터로 계산한다
-- 평가 결과는 단어 단위 상태로 저장 가능해야 한다
+- Unconfirmed page text cannot generate TTS.
+- TTS asset must always reference `text_version_id` and `tts_profile_id`.
+- A page should have one active `ready` TTS asset at a time.
+- Reader playback only uses `ready` assets.
+- Highlight timing and audio are derived from the same generated TTS asset.
 
 ## Acceptance Criteria
 
-- 관리자만으로 책, 페이지, 텍스트, TTS 자산을 완성할 수 있어야 한다
-- 한 페이지 읽기 세션이 이미지, 텍스트, 오디오, 평가 결과를 모두 연결해야 한다
-- TTS 설정 변경 시 영향을 받는 자산만 재생성할 수 있어야 한다
-- 구현 시 OCR 없이도 서비스 핵심 기능을 사용할 수 있어야 한다
+- Admin can complete authoring up to confirmed text and successful page TTS generation.
+- Reader can load and play page audio with text highlight from stored timings.
+- Re-generating TTS replaces prior ready asset for the same page.
+- Runtime/config errors surface actionable API errors.
 
 ## Out Of Scope
 
-- OCR 자동 인입을 MVP 필수로 취급하지 않는다
-- 실시간 스트리밍 TTS를 기본 구조로 삼지 않는다
-- 브라우저 내장 STT를 평가 엔진으로 사용하지 않는다
-
+- OCR as mandatory ingestion path
+- Real-time streaming TTS baseline
+- Browser-native STT as assessment engine

@@ -188,6 +188,7 @@
 - `books.reading_level`은 `1..3` 범위 정수여야 한다
 - `book_pages.confirmed_text`가 없으면 `input_status=ready`가 될 수 없다
 - 정식 TTS 자산은 반드시 `text_version_id`와 `tts_profile_id`를 가져야 한다
+- 각 `page_id`는 활성 `ready` TTS 자산을 1개만 유지한다(재생성 시 이전 `ready` 자산 교체/정리)
 - 읽기 평가는 반드시 특정 `page_id`와 `text_version_id`에 귀속될 수 있어야 한다
 - `reading-recordings`는 장기 보관을 기본 전략으로 삼지 않는다
 

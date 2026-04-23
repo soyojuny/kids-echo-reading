@@ -69,6 +69,55 @@ function mapAsset(row: TtsAssetRow, audioUrl?: string): PageTtsAsset {
   };
 }
 
+function mapTtsGenerationError(error: unknown): { status: number; message: string } {
+  if (!(error instanceof Error)) {
+    return {
+      status: 500,
+      message: "Unknown error"
+    };
+  }
+
+  const message = error.message;
+
+  if (message.includes("Unsupported TTS provider configuration")) {
+    return {
+      status: 503,
+      message
+    };
+  }
+
+  if (message.includes("is configured but not implemented in this runtime yet")) {
+    return {
+      status: 503,
+      message
+    };
+  }
+
+  if (message.includes("Edge TTS hard timeout exceeded")) {
+    return {
+      status: 504,
+      message: "Edge TTS request timed out. Retry with shorter page text or check runtime timeout settings."
+    };
+  }
+
+  if (
+    message.includes("Edge TTS subtitle metadata is missing") ||
+    message.includes("Edge TTS returned empty subtitle metadata") ||
+    message.includes("Failed to map Edge subtitle metadata to word timings") ||
+    message.includes("Failed to calculate Edge TTS duration from metadata")
+  ) {
+    return {
+      status: 502,
+      message
+    };
+  }
+
+  return {
+    status: 500,
+    message
+  };
+}
+
 export async function GET(_: Request, context: RouteParams) {
   try {
     const { bookId, pageId } = await context.params;
@@ -286,9 +335,10 @@ export async function POST(request: Request, context: RouteParams) {
       asset: mapAsset(row, signedAudio?.signedUrl)
     });
   } catch (error) {
+    const mapped = mapTtsGenerationError(error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 }
+      { error: mapped.message },
+      { status: mapped.status }
     );
   }
 }

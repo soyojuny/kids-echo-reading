@@ -105,7 +105,7 @@ src/
 규칙:
 
 - 렌더링과 사용자 상호작용만 담당한다
-- DB, Storage, Google, Azure 호출 금지
+- DB, Storage, Edge TTS, Azure 호출 금지
 - 복잡한 규칙 판단은 `application` 또는 `domain`으로 넘긴다
 
 ## `features/*/application`
@@ -160,7 +160,7 @@ src/
 예:
 
 - `SupabaseBookRepository`
-- `GoogleTtsClient`
+- `EdgeTtsClient`
 - `AzurePronunciationClient`
 
 규칙:
@@ -178,7 +178,7 @@ src/
 
 규칙:
 
-- `Supabase`, `Google`, `Azure` 연결 로직은 공통화한다
+- `Supabase`, `Edge TTS`, `Azure` 연결 로직은 공통화한다
 - 비밀키 처리 코드는 서버 경계 안에만 둔다
 
 ## Object-Oriented Development Rules

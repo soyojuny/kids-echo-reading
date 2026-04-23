@@ -1,9 +1,8 @@
 import type { PageTtsTimingJson } from "@/features/tts/types/PageTtsAsset";
 import type { SentencePauseLevel } from "@/features/tts/types/TtsProfile";
 import { synthesizeEdgePageTts } from "@/server/tts/edgeSynthesis";
-import { synthesizeFallbackPageTts } from "@/server/tts/fallbackSynthesis";
 
-export type TtsProvider = "fallback" | "edge";
+export type TtsProvider = "edge" | "google" | "azure";
 
 type SynthesizePageTtsInput = {
   text: string;
@@ -23,54 +22,42 @@ type SynthesizePageTtsResult = {
 
 function readConfiguredProvider(): TtsProvider {
   const raw = process.env.TTS_PROVIDER?.trim().toLowerCase();
-  if (raw === "edge") {
+  if (!raw) {
     return "edge";
   }
-  return "fallback";
+
+  if (raw === "edge" || raw === "google" || raw === "azure") {
+    return raw as TtsProvider;
+  }
+
+  throw new Error(
+    'Unsupported TTS provider configuration. Set TTS_PROVIDER to one of: "edge", "google", "azure".'
+  );
 }
 
-function shouldUseEdgeOnCurrentRuntime(): boolean {
-  const isVercel = process.env.VERCEL === "1";
-  const allowServerlessEdge = process.env.EDGE_TTS_ALLOW_SERVERLESS === "true";
-
-  if (isVercel && !allowServerlessEdge) {
-    return false;
+function assertImplementedProvider(provider: TtsProvider): asserts provider is "edge" {
+  if (provider === "edge") {
+    return;
   }
-  return true;
+
+  throw new Error(`TTS provider "${provider}" is configured but not implemented in this runtime yet.`);
 }
 
 export async function synthesizePageTts(input: SynthesizePageTtsInput): Promise<SynthesizePageTtsResult> {
-  const configuredProvider = readConfiguredProvider();
+  const provider = readConfiguredProvider();
+  assertImplementedProvider(provider);
 
-  if (configuredProvider === "edge") {
-    if (!shouldUseEdgeOnCurrentRuntime()) {
-      throw new Error("Edge TTS is disabled in this runtime.");
-    }
-
-    const edgeResult = await synthesizeEdgePageTts({
-      text: input.text,
-      voiceName: input.voiceName,
-      speakingRate: input.speakingRate,
-      sentencePauseLevel: input.sentencePauseLevel
-    });
-
-    return {
-      ...edgeResult,
-      provider: "edge",
-      contentType: "audio/mpeg",
-      extension: "mp3"
-    };
-  }
-
-  const fallbackResult = synthesizeFallbackPageTts({
+  const edgeResult = await synthesizeEdgePageTts({
     text: input.text,
+    voiceName: input.voiceName,
     speakingRate: input.speakingRate,
     sentencePauseLevel: input.sentencePauseLevel
   });
+
   return {
-    ...fallbackResult,
-    provider: "fallback",
-    contentType: "audio/wav",
-    extension: "wav"
+    ...edgeResult,
+    provider: "edge",
+    contentType: "audio/mpeg",
+    extension: "mp3"
   };
 }
