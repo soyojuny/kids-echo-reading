@@ -82,6 +82,7 @@ type BrowserSpeechRecognition = {
 
 const AUTO_NEXT_SENTENCE_MS = 1000;
 const AUTO_NEXT_PAGE_MS = 1000;
+const CHILD_LISTENING_MAX_MS = 12000;
 const LAST_SESSION_STORAGE_KEY = "kids-echo-reading-last-session";
 
 function getSpeechRecognitionConstructor(): (new () => BrowserSpeechRecognition) | undefined {
@@ -314,8 +315,7 @@ export function ReaderSessionPlayer({
   const [manualViewMode, setManualViewMode] = useState(false);
   const [speechRecognitionSupported, setSpeechRecognitionSupported] = useState(false);
   const [isRecognizing, setIsRecognizing] = useState(false);
-  const [recognizedTranscript, setRecognizedTranscript] = useState("");
-  const [assessmentWords, setAssessmentWords] = useState<LocalAssessmentWord[]>([]);
+  const [highlightedCorrectIndexes, setHighlightedCorrectIndexes] = useState<number[]>([]);
 
   const sentenceIndexRef = useRef(0);
   const aiWordIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -325,11 +325,18 @@ export function ReaderSessionPlayer({
   const aiFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const segmentStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const segmentMonitorFrameRef = useRef<number | null>(null);
+  const listeningStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const segmentAudioRef = useRef<HTMLAudioElement | null>(null);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const sentenceAttemptCountRef = useRef<Record<number, number>>({});
+  const sentenceAutoAdvanceLockedRef = useRef<Record<number, boolean>>({});
 
   const currentTokens = sentenceTokens[sentenceIndex] ?? [];
+  const highlightedCorrectIndexSet = useMemo(
+    () => new Set(highlightedCorrectIndexes),
+    [highlightedCorrectIndexes]
+  );
 
   function clearFlowTimers() {
     if (aiWordIntervalRef.current) {
@@ -357,6 +364,10 @@ export function ReaderSessionPlayer({
     if (segmentStopTimerRef.current) {
       clearTimeout(segmentStopTimerRef.current);
       segmentStopTimerRef.current = null;
+    }
+    if (listeningStopTimerRef.current) {
+      clearTimeout(listeningStopTimerRef.current);
+      listeningStopTimerRef.current = null;
     }
     if (segmentMonitorFrameRef.current !== null && typeof window !== "undefined") {
       window.cancelAnimationFrame(segmentMonitorFrameRef.current);
@@ -402,6 +413,10 @@ export function ReaderSessionPlayer({
       recognition.abort();
     } catch {
       // Ignore abort errors while recognition has not started yet.
+    }
+    if (listeningStopTimerRef.current) {
+      clearTimeout(listeningStopTimerRef.current);
+      listeningStopTimerRef.current = null;
     }
     speechRecognitionRef.current = null;
     setIsRecognizing(false);
@@ -629,13 +644,16 @@ export function ReaderSessionPlayer({
     setSentenceIndex(targetSentenceIndex);
     sentenceIndexRef.current = targetSentenceIndex;
     setActiveWordIndex(-1);
-    setRecognizedTranscript("");
-    setAssessmentWords([]);
+    setHighlightedCorrectIndexes([]);
     setReadingState("child_reading");
-    setStatusMessage("아이 차례예요. 문장을 읽고 완료 버튼을 눌러 주세요.");
+    setStatusMessage("듣기 모드입니다. 문장을 따라 읽어 주세요.");
+    startChildListening(targetSentenceIndex);
   }
 
-  function beginSpeechRecognitionAssessment(targetSentenceIndex: number, onFinished: () => void) {
+  function beginSpeechRecognitionAssessment(
+    targetSentenceIndex: number,
+    onFinished: (result: { localAssessment: LocalAssessmentWord[]; tokenCount: number }) => void
+  ) {
     if (isRecognizing) {
       return;
     }
@@ -652,14 +670,12 @@ export function ReaderSessionPlayer({
       return;
     }
 
-    setRecognizedTranscript("");
-    setAssessmentWords([]);
     setIsRecognizing(true);
 
     const recognition = new RecognitionConstructor();
     speechRecognitionRef.current = recognition;
     recognition.lang = "en-US";
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
 
@@ -680,9 +696,6 @@ export function ReaderSessionPlayer({
         }
       }
       latestTranscript = merged.trim();
-      if (latestTranscript) {
-        setRecognizedTranscript(latestTranscript);
-      }
     };
 
     recognition.onerror = (event) => {
@@ -693,6 +706,10 @@ export function ReaderSessionPlayer({
     };
 
     recognition.onend = () => {
+      if (listeningStopTimerRef.current) {
+        clearTimeout(listeningStopTimerRef.current);
+        listeningStopTimerRef.current = null;
+      }
       speechRecognitionRef.current = null;
       setIsRecognizing(false);
 
@@ -701,28 +718,78 @@ export function ReaderSessionPlayer({
       }
 
       if (!latestTranscript) {
-        setStatusMessage("음성이 인식되지 않았습니다. 다시 시도해 주세요.");
+        onFinished({ localAssessment: [], tokenCount: referenceTokens.length });
         return;
       }
 
       const localAssessment = assessLocalPronunciation(referenceTokens, latestTranscript);
-      setAssessmentWords(localAssessment);
-
-      const correctCount = localAssessment.filter((word) => word.state === "correct").length;
-      setStatusMessage(
-        `${correctCount}/${referenceTokens.length} 단어를 정확히 읽었어요. ${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`
-      );
-      onFinished();
+      onFinished({ localAssessment, tokenCount: referenceTokens.length });
     };
 
     try {
       recognition.start();
-      setStatusMessage("음성 인식 중입니다. 문장을 읽어 주세요.");
+      if (listeningStopTimerRef.current) {
+        clearTimeout(listeningStopTimerRef.current);
+      }
+      listeningStopTimerRef.current = setTimeout(() => {
+        if (!speechRecognitionRef.current) {
+          return;
+        }
+        try {
+          speechRecognitionRef.current.stop();
+        } catch {
+          // Ignore stop errors when recognition already ended.
+        }
+      }, CHILD_LISTENING_MAX_MS);
+      setStatusMessage("듣고 있어요. 천천히 또박또박 읽어 주세요.");
     } catch {
+      if (listeningStopTimerRef.current) {
+        clearTimeout(listeningStopTimerRef.current);
+        listeningStopTimerRef.current = null;
+      }
       speechRecognitionRef.current = null;
       setIsRecognizing(false);
       setStatusMessage("음성 인식을 시작하지 못했습니다. 다시 시도해 주세요.");
     }
+  }
+
+  function startChildListening(targetSentenceIndex: number) {
+    beginSpeechRecognitionAssessment(targetSentenceIndex, ({ localAssessment, tokenCount }) => {
+      const correctIndexes = localAssessment
+        .filter((word) => word.state === "correct" && word.index >= 0 && word.index < tokenCount)
+        .map((word) => word.index);
+      const dedupedCorrectIndexes = [...new Set(correctIndexes)];
+      setHighlightedCorrectIndexes(dedupedCorrectIndexes);
+
+      const attemptCount = (sentenceAttemptCountRef.current[targetSentenceIndex] ?? 0) + 1;
+      sentenceAttemptCountRef.current[targetSentenceIndex] = attemptCount;
+      const isSentenceCompleted = tokenCount > 0 && dedupedCorrectIndexes.length === tokenCount;
+      const autoAdvanceLocked = sentenceAutoAdvanceLockedRef.current[targetSentenceIndex] ?? false;
+
+      if (isSentenceCompleted && !autoAdvanceLocked) {
+        setReadingState("sentence_done");
+        setStatusMessage(`${AUTO_NEXT_SENTENCE_MS / 1000}초 후 다음 문장으로 이동합니다.`);
+        sentenceTransitionTimerRef.current = setTimeout(() => {
+          goNextSentenceOrPage(false);
+        }, AUTO_NEXT_SENTENCE_MS);
+        return;
+      }
+
+      setReadingState("child_reading");
+      if (isSentenceCompleted && autoAdvanceLocked) {
+        setStatusMessage("정확히 읽었어요. 다음 문장/페이지 버튼을 누르면 이동합니다.");
+        return;
+      }
+
+      if (attemptCount < 2) {
+        setStatusMessage("정확히 읽은 단어가 표시됐어요. 다시 한번 말해 보세요.");
+        startChildListening(targetSentenceIndex);
+        return;
+      }
+
+      sentenceAutoAdvanceLockedRef.current[targetSentenceIndex] = true;
+      setStatusMessage("현재 문장에 머물러요. 다음 문장/페이지 버튼을 누르면 이동합니다.");
+    });
   }
 
   function beginAiPlaying(targetSentenceIndex: number) {
@@ -735,6 +802,9 @@ export function ReaderSessionPlayer({
     stopAllAutomation();
     setSentenceIndex(targetSentenceIndex);
     sentenceIndexRef.current = targetSentenceIndex;
+    sentenceAttemptCountRef.current[targetSentenceIndex] = 0;
+    sentenceAutoAdvanceLockedRef.current[targetSentenceIndex] = false;
+    setHighlightedCorrectIndexes([]);
     setReadingState("ai_playing");
     setStatusMessage("AI가 먼저 읽고 있어요.");
 
@@ -852,12 +922,7 @@ export function ReaderSessionPlayer({
       return;
     }
 
-    beginSpeechRecognitionAssessment(sentenceIndexRef.current, () => {
-      setReadingState("sentence_done");
-      sentenceTransitionTimerRef.current = setTimeout(() => {
-        goNextSentenceOrPage(false);
-      }, AUTO_NEXT_SENTENCE_MS);
-    });
+    startChildListening(sentenceIndexRef.current);
   }
 
   function goPrevSentence() {
@@ -924,6 +989,9 @@ export function ReaderSessionPlayer({
     setSentenceIndex(0);
     sentenceIndexRef.current = 0;
     setActiveWordIndex(-1);
+    setHighlightedCorrectIndexes([]);
+    sentenceAttemptCountRef.current = {};
+    sentenceAutoAdvanceLockedRef.current = {};
 
     if (sentenceTokens.length === 0) {
       setReadingState("idle");
@@ -1031,11 +1099,15 @@ export function ReaderSessionPlayer({
               <p className={styles.script}>
                 {currentTokens.length === 0 && <span className={styles.scriptToken}>문장이 없습니다.</span>}
                 {currentTokens.map((token, index) => {
-                  const active = readingState === "ai_playing" && activeWordIndex === index;
+                  const activeByAi = readingState === "ai_playing" && activeWordIndex === index;
+                  const activeByChild =
+                    readingState !== "ai_playing" && highlightedCorrectIndexSet.has(index);
                   return (
                     <span
                       key={`${sentenceIndex}-${index}-${token}`}
-                      className={`${styles.scriptToken} ${active ? styles.tokenFilled : ""}`}
+                      className={`${styles.scriptToken} ${
+                        activeByAi || activeByChild ? styles.tokenFilled : ""
+                      }`}
                     >
                       {token}
                     </span>
@@ -1062,7 +1134,7 @@ export function ReaderSessionPlayer({
                 onClick={completeChildReading}
                 disabled={readingState !== "child_reading" || !speechRecognitionSupported || isRecognizing}
               >
-                {isRecognizing ? "음성 인식 중..." : "따라 읽기 완료"}
+                {isRecognizing ? "듣는 중..." : "듣기 다시 시작"}
               </button>
             </div>
 
@@ -1090,30 +1162,6 @@ export function ReaderSessionPlayer({
             {!speechRecognitionSupported && (
               <div className={styles.errorBox}>
                 이 브라우저는 Web Speech API를 지원하지 않아 음성 인식을 사용할 수 없습니다.
-              </div>
-            )}
-
-            {recognizedTranscript && (
-              <div className={styles.pageReview}>
-                <p className={styles.subtitle}>인식된 문장</p>
-                <p style={{ margin: "8px 0 0" }}>{recognizedTranscript}</p>
-              </div>
-            )}
-
-            {assessmentWords.length > 0 && (
-              <div className={styles.pageReview}>
-                <p className={styles.subtitle}>단어 평가</p>
-                <ul className={styles.reviewList}>
-                  {assessmentWords.map((word, index) => (
-                    <li key={`${word.referenceWord}-${index}`} className={styles.reviewWord}>
-                      {word.state === "correct" ? "정확" : ""}
-                      {word.state === "partial" ? "부분" : ""}
-                      {word.state === "missed" ? "누락" : ""}
-                      {word.state === "wrong" ? "오류" : ""}
-                      {word.state === "inserted" ? "추가" : ""}: {word.referenceWord}
-                    </li>
-                  ))}
-                </ul>
               </div>
             )}
           </section>
@@ -1163,3 +1211,4 @@ export function ReaderSessionPlayer({
     </main>
   );
 }
+
