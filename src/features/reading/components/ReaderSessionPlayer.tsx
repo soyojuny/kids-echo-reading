@@ -97,103 +97,69 @@ function getSpeechRecognitionConstructor(): (new () => BrowserSpeechRecognition)
   return host.SpeechRecognition ?? host.webkitSpeechRecognition;
 }
 
-function isPartialWordMatch(reference: string, recognized: string): boolean {
-  if (!reference || !recognized) {
-    return false;
-  }
-  if (reference === recognized) {
-    return true;
-  }
-
-  const minLength = Math.min(reference.length, recognized.length);
-  if (minLength < 4) {
-    return false;
+function findExactMatchedReferenceIndexes(referenceTokens: string[], recognizedTokens: string[]): number[] {
+  const normalizedReference = referenceTokens.map((token) => normalizeToken(token));
+  const normalizedRecognized = recognizedTokens.map((token) => normalizeToken(token));
+  const refLength = normalizedReference.length;
+  const recognizedLength = normalizedRecognized.length;
+  if (refLength === 0 || recognizedLength === 0) {
+    return [];
   }
 
-  return reference.includes(recognized) || recognized.includes(reference);
+  const dp: number[][] = Array.from({ length: refLength + 1 }, () =>
+    Array.from({ length: recognizedLength + 1 }, () => 0)
+  );
+
+  for (let refIndex = 1; refIndex <= refLength; refIndex += 1) {
+    for (let recognizedIndex = 1; recognizedIndex <= recognizedLength; recognizedIndex += 1) {
+      const normalizedRef = normalizedReference[refIndex - 1];
+      const normalizedRecognizedToken = normalizedRecognized[recognizedIndex - 1];
+      if (normalizedRef && normalizedRef === normalizedRecognizedToken) {
+        dp[refIndex][recognizedIndex] = dp[refIndex - 1][recognizedIndex - 1] + 1;
+      } else {
+        dp[refIndex][recognizedIndex] = Math.max(
+          dp[refIndex - 1][recognizedIndex],
+          dp[refIndex][recognizedIndex - 1]
+        );
+      }
+    }
+  }
+
+  let refIndex = refLength;
+  let recognizedIndex = recognizedLength;
+  const matchedReferenceIndexes: number[] = [];
+
+  while (refIndex > 0 && recognizedIndex > 0) {
+    const normalizedRef = normalizedReference[refIndex - 1];
+    const normalizedRecognizedToken = normalizedRecognized[recognizedIndex - 1];
+    if (normalizedRef && normalizedRef === normalizedRecognizedToken) {
+      matchedReferenceIndexes.push(refIndex - 1);
+      refIndex -= 1;
+      recognizedIndex -= 1;
+      continue;
+    }
+
+    if (dp[refIndex - 1][recognizedIndex] >= dp[refIndex][recognizedIndex - 1]) {
+      refIndex -= 1;
+    } else {
+      recognizedIndex -= 1;
+    }
+  }
+
+  matchedReferenceIndexes.reverse();
+  return matchedReferenceIndexes;
 }
 
 function assessLocalPronunciation(referenceTokens: string[], recognizedText: string): LocalAssessmentWord[] {
   const recognizedTokens = tokenizeSentence(recognizedText);
-  const normalizedRecognized = recognizedTokens.map((token) => normalizeToken(token));
-  const normalizedReference = referenceTokens.map((token) => normalizeToken(token));
-  const assessed: LocalAssessmentWord[] = [];
+  const matchedReferenceIndexes = findExactMatchedReferenceIndexes(referenceTokens, recognizedTokens);
+  const matchedReferenceIndexSet = new Set(matchedReferenceIndexes);
 
-  let referenceIndex = 0;
-  let recognizedIndex = 0;
-
-  while (referenceIndex < referenceTokens.length && recognizedIndex < recognizedTokens.length) {
-    const referenceWord = referenceTokens[referenceIndex];
-    const recognizedWord = recognizedTokens[recognizedIndex];
-    const normalizedRef = normalizedReference[referenceIndex];
-    const normalizedRecognizedWord = normalizedRecognized[recognizedIndex];
-
-    if (normalizedRef && normalizedRef === normalizedRecognizedWord) {
-      assessed.push({
-        index: referenceIndex,
-        referenceWord,
-        recognizedText: recognizedWord,
-        state: "correct"
-      });
-      referenceIndex += 1;
-      recognizedIndex += 1;
-      continue;
-    }
-
-    const nextRecognized = normalizedRecognized[recognizedIndex + 1];
-    if (nextRecognized && nextRecognized === normalizedRef) {
-      assessed.push({
-        index: assessed.length,
-        referenceWord: recognizedWord,
-        recognizedText: recognizedWord,
-        state: "inserted"
-      });
-      recognizedIndex += 1;
-      continue;
-    }
-
-    const nextReference = normalizedReference[referenceIndex + 1];
-    if (nextReference && nextReference === normalizedRecognizedWord) {
-      assessed.push({
-        index: referenceIndex,
-        referenceWord,
-        state: "missed"
-      });
-      referenceIndex += 1;
-      continue;
-    }
-
-    assessed.push({
-      index: referenceIndex,
-      referenceWord,
-      recognizedText: recognizedWord,
-      state: isPartialWordMatch(normalizedRef, normalizedRecognizedWord) ? "partial" : "wrong"
-    });
-    referenceIndex += 1;
-    recognizedIndex += 1;
-  }
-
-  while (referenceIndex < referenceTokens.length) {
-    assessed.push({
-      index: referenceIndex,
-      referenceWord: referenceTokens[referenceIndex],
-      state: "missed"
-    });
-    referenceIndex += 1;
-  }
-
-  while (recognizedIndex < recognizedTokens.length) {
-    const recognizedWord = recognizedTokens[recognizedIndex];
-    assessed.push({
-      index: assessed.length,
-      referenceWord: recognizedWord,
-      recognizedText: recognizedWord,
-      state: "inserted"
-    });
-    recognizedIndex += 1;
-  }
-
-  return assessed;
+  return referenceTokens.map((referenceWord, index) => ({
+    index,
+    referenceWord,
+    state: matchedReferenceIndexSet.has(index) ? "correct" : "wrong"
+  }));
 }
 
 function resolveActiveWordIndex(wordTimings: WordTiming[], currentAudioMs: number): number {
@@ -696,6 +662,21 @@ export function ReaderSessionPlayer({
         }
       }
       latestTranscript = merged.trim();
+      if (!latestTranscript) {
+        setHighlightedCorrectIndexes([]);
+        return;
+      }
+
+      const interimAssessment = assessLocalPronunciation(referenceTokens, latestTranscript);
+      const interimCorrectIndexes = [
+        ...new Set(
+          interimAssessment
+            .filter((word) => word.state === "correct" && word.index >= 0 && word.index < referenceTokens.length)
+            .map((word) => word.index)
+        )
+      ];
+      setHighlightedCorrectIndexes(interimCorrectIndexes);
+      setStatusMessage(`듣고 있어요. ${interimCorrectIndexes.length}/${referenceTokens.length} 단어 정확`);
     };
 
     recognition.onerror = (event) => {
