@@ -79,7 +79,6 @@ function loadLastSessionSnapshot(): LastSessionSnapshot | null {
     return null;
   }
 }
-
 function pickIndex(seed: string, size: number): number {
   const total = seed.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
   return total % size;
@@ -274,11 +273,13 @@ export function ReaderLibraryClient({ books, errorMessage }: ReaderLibraryClient
             <div className={styles.bookGrid}>
               {filteredBooks.map((book) => (
                 <Link key={book.id} href={`/session/${book.id}/1`} className={styles.bookCard}>
-                  {book.coverImageUrl ? (
-                    <img className={styles.coverImage} src={book.coverImageUrl} alt={`${book.title} 표지`} />
-                  ) : (
-                    <div className={`${styles.cover} ${book.meta.fallbackCoverClass}`} />
-                  )}
+                  <div className={styles.coverFrame}>
+                    {book.coverImageUrl ? (
+                      <img className={styles.coverImage} src={book.coverImageUrl} alt={`${book.title} 표지`} />
+                    ) : (
+                      <div className={`${styles.cover} ${book.meta.fallbackCoverClass}`} />
+                    )}
+                  </div>
                   <h3>{book.title}</h3>
                   <p className={styles.bookMeta}>{book.meta.subtitle}</p>
                   {book.author && <p className={styles.bookMeta}>저자: {book.author}</p>}
@@ -297,3 +298,4 @@ export function ReaderLibraryClient({ books, errorMessage }: ReaderLibraryClient
     </main>
   );
 }
+

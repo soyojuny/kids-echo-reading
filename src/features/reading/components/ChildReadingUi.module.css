@@ -113,17 +113,19 @@
 
 .bookGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 14px;
 }
 
 .bookCard {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   border: 0;
   text-align: left;
   border-radius: 18px;
-  padding: 14px;
-  min-height: 168px;
+  padding: 12px;
+  min-height: 320px;
   background: #ffffff;
   box-shadow: 0 8px 20px rgba(42, 80, 131, 0.11);
 }
@@ -133,6 +135,17 @@
   font-size: 18px;
 }
 
+.coverFrame {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 12px;
+  background: #eef5ff;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+}
+
 .bookMeta {
   margin: 6px 0 0;
   color: var(--muted);
@@ -140,18 +153,20 @@
 }
 
 .cover {
-  height: 98px;
-  border-radius: 12px;
-  margin-bottom: 10px;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  margin-bottom: 0;
 }
 
 .coverImage {
   display: block;
   width: 100%;
-  height: 98px;
-  border-radius: 12px;
-  margin-bottom: 10px;
-  object-fit: cover;
+  height: 100%;
+  border-radius: 0;
+  margin-bottom: 0;
+  object-fit: contain;
+  object-position: center;
   background: #eef5ff;
 }
 
@@ -203,23 +218,25 @@
 }
 
 .illustration {
-  min-height: 320px;
+  min-height: 220px;
+  max-height: min(42vh, 360px);
   border-radius: 16px;
   background: linear-gradient(140deg, #a7d3ff, #f5faff);
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
   padding: 12px;
+  overflow: hidden;
 }
 
 .illustrationSpread {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .pagePanel {
   border-radius: 12px;
   background: #ffffff;
-  min-height: 260px;
+  min-height: 0;
   display: grid;
   place-content: center;
   text-align: center;
@@ -231,12 +248,12 @@
 .pageImage {
   width: 100%;
   height: 100%;
-  max-height: 440px;
+  max-height: 100%;
   object-fit: contain;
 }
 
 .script {
-  font-size: clamp(20px, 2.6vw, 30px);
+  font-size: clamp(18px, 2.2vw, 26px);
   line-height: 1.6;
   margin: 0;
   display: flex;
@@ -308,6 +325,42 @@
   justify-content: space-between;
   gap: 10px;
   margin-top: 12px;
+}
+
+.readerCard {
+  padding-bottom: 20px;
+}
+
+.readerHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.readerHeader h2 {
+  margin: 0;
+}
+
+.actionDock {
+  position: sticky;
+  bottom: 8px;
+  margin-top: 12px;
+  border-radius: 14px;
+  border: 1px solid #dbe7fa;
+  background: rgba(248, 251, 255, 0.95);
+  backdrop-filter: blur(2px);
+  box-shadow: 0 8px 18px rgba(42, 80, 131, 0.12);
+  padding: 10px;
+  z-index: 2;
+}
+
+.actionDock .controls {
+  margin-top: 0;
+}
+
+.actionDock .sentenceNav {
+  margin-top: 8px;
 }
 
 .btn {
@@ -441,6 +494,29 @@
   .sentenceNav {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .readerHeader {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .actionDock {
+    bottom: 6px;
+    padding: 8px;
+  }
+
+  .actionDock .controls {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .actionDock .sentenceNav {
+    flex-direction: row;
+  }
+
+  .actionDock .sentenceNav .btn {
+    flex: 1;
   }
 
   .footerNav {

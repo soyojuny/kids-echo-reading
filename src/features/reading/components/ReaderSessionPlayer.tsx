@@ -96,7 +96,6 @@ function getSpeechRecognitionConstructor(): (new () => BrowserSpeechRecognition)
   };
   return host.SpeechRecognition ?? host.webkitSpeechRecognition;
 }
-
 function findExactMatchedReferenceIndexes(referenceTokens: string[], recognizedTokens: string[]): number[] {
   const normalizedReference = referenceTokens.map((token) => normalizeToken(token));
   const normalizedRecognized = recognizedTokens.map((token) => normalizeToken(token));
@@ -859,13 +858,13 @@ export function ReaderSessionPlayer({
     stopAllAutomation();
     if (nextPageNumber) {
       if (immediate) {
-        router.push(`/session/${bookId}/${nextPageNumber}`);
+        router.push(`/session/${bookId}/${nextPageNumber}`, { scroll: true });
         return;
       }
       setReadingState("page_transition_wait");
       setStatusMessage(`${AUTO_NEXT_PAGE_MS / 1000}초 후 다음 페이지로 이동합니다.`);
       pageTransitionTimerRef.current = setTimeout(() => {
-        router.push(`/session/${bookId}/${nextPageNumber}`);
+        router.push(`/session/${bookId}/${nextPageNumber}`, { scroll: true });
       }, AUTO_NEXT_PAGE_MS);
       return;
     }
@@ -925,7 +924,7 @@ export function ReaderSessionPlayer({
   }
 
   function restartCurrentBook() {
-    router.push(`/session/${bookId}/1`);
+    router.push(`/session/${bookId}/1`, { scroll: true });
   }
 
   useEffect(() => {
@@ -964,6 +963,13 @@ export function ReaderSessionPlayer({
   useEffect(() => {
     postPrecacheMessage([imageUrl, nextPageImageUrl ?? "", audioUrl ?? ""]);
   }, [imageUrl, nextPageImageUrl, audioUrl]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [bookId, pageNumber]);
 
   useEffect(() => {
     stopAllAutomation();
@@ -1007,19 +1013,12 @@ export function ReaderSessionPlayer({
   return (
     <main className={styles.appRoot}>
       <div className={styles.app}>
-        <header className={styles.topbar}>
-          <div>
-            <h1 className={styles.title}>리딩 놀이터</h1>
-            <p className={styles.subtitle}>아동용 읽기 연습 CX 화면</p>
-          </div>
-          <span className={styles.chip}>
-            {readingState === "completed" ? "완료" : `문장 ${sentenceIndex + 1}/${sentences.length || 0}`}
-          </span>
-        </header>
-
         {readingState !== "completed" && (
-          <section className={styles.card}>
-            <h2>{readingTitle}</h2>
+          <section className={`${styles.card} ${styles.readerCard}`}>
+            <div className={styles.readerHeader}>
+              <h2>{readingTitle}</h2>
+              <span className={styles.chip}>{`문장 ${sentenceIndex + 1}/${sentences.length || 0}`}</span>
+            </div>
             <p className={styles.subtitle}>
               페이지 {pageNumber} / {totalPages || "?"}
             </p>
@@ -1097,48 +1096,50 @@ export function ReaderSessionPlayer({
               </p>
             </div>
 
-            <div className={styles.controls}>
-              <button type="button" className={`${styles.btn} ${styles.btnSoft}`} onClick={handleStop}>
-                중지
-              </button>
-              <button
-                type="button"
-                className={`${styles.btn} ${styles.btnSoft}`}
-                onClick={() => beginAiPlaying(sentenceIndex)}
-                disabled={readingState === "page_transition_wait"}
-              >
-                현재 문장 다시 듣기
-              </button>
-              <button
-                type="button"
-                className={`${styles.btn} ${styles.btnSoft}`}
-                onClick={completeChildReading}
-                disabled={readingState !== "child_reading" || !speechRecognitionSupported || isRecognizing}
-              >
-                {isRecognizing ? "듣는 중..." : "듣기 다시 시작"}
-              </button>
-            </div>
-
-            <div className={styles.sentenceNav}>
-              <button
-                type="button"
-                className={`${styles.btn} ${styles.btnSoft}`}
-                onClick={goPrevSentence}
-                disabled={sentenceIndex <= 0}
-              >
-                이전 문장
-              </button>
-              <button
-                type="button"
-                className={`${styles.btn} ${styles.btnSoft}`}
-                onClick={() => goNextSentenceOrPage(true)}
-                disabled={readingState === "page_transition_wait"}
-              >
-                다음 문장 / 페이지
-              </button>
-            </div>
-
             <p className={styles.statusLine}>{statusMessage}</p>
+
+            <div className={styles.actionDock}>
+              <div className={styles.controls}>
+                <button type="button" className={`${styles.btn} ${styles.btnSoft}`} onClick={handleStop}>
+                  중지
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnSoft}`}
+                  onClick={() => beginAiPlaying(sentenceIndex)}
+                  disabled={readingState === "page_transition_wait"}
+                >
+                  현재 문장 다시 듣기
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnSoft}`}
+                  onClick={completeChildReading}
+                  disabled={readingState !== "child_reading" || !speechRecognitionSupported || isRecognizing}
+                >
+                  {isRecognizing ? "듣는 중..." : "듣기 다시 시작"}
+                </button>
+              </div>
+
+              <div className={styles.sentenceNav}>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnSoft}`}
+                  onClick={goPrevSentence}
+                  disabled={sentenceIndex <= 0}
+                >
+                  이전 문장
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.btn} ${styles.btnSoft}`}
+                  onClick={() => goNextSentenceOrPage(true)}
+                  disabled={readingState === "page_transition_wait"}
+                >
+                  다음 문장 / 페이지
+                </button>
+              </div>
+            </div>
 
             {!speechRecognitionSupported && (
               <div className={styles.errorBox}>
@@ -1163,26 +1164,6 @@ export function ReaderSessionPlayer({
           </section>
         )}
 
-        <nav className={styles.footerNav}>
-          <Link href="/library" className={styles.footerNavItem}>
-            1. 책 고르기
-          </Link>
-          <span
-            className={`${styles.footerNavItem} ${
-              readingState === "completed" ? "" : styles.footerNavActive
-            }`}
-          >
-            2. 읽기 연습
-          </span>
-          <span
-            className={`${styles.footerNavItem} ${
-              readingState === "completed" ? styles.footerNavActive : ""
-            }`}
-          >
-            3. 결과 보기
-          </span>
-        </nav>
-
         {!audioUrl && (
           <div className={styles.errorBox}>
             이 페이지에는 TTS 오디오가 없어 브라우저 음성으로 대체 재생합니다.
@@ -1192,4 +1173,5 @@ export function ReaderSessionPlayer({
     </main>
   );
 }
+
 
